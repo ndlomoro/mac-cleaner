@@ -68,3 +68,14 @@ def test_delete_from_trash_still_deletes_symlink_items(tmp_path):
     delete_from_trash(link)
     assert not link.is_symlink() and not link.exists()
     assert target.exists()  # only the link is removed, never its target
+
+
+def test_delete_from_trash_refuses_trailing_dotdot(tmp_path):
+    home_like = tmp_path / "home"
+    trash_dir = home_like / ".Trash"
+    trash_dir.mkdir(parents=True)
+    (home_like / "precious.txt").write_text("keep me")
+    with pytest.raises(NotInTrashError):
+        delete_from_trash(trash_dir / "..")
+    assert (home_like / "precious.txt").exists()
+    assert home_like.exists()

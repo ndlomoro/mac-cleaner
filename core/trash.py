@@ -35,9 +35,15 @@ def delete_from_trash(trash_path: Path) -> None:
     escapes via `..` or a symlinked ancestor are rejected. The final component
     itself is deliberately NOT resolved: a legitimately-trashed item may be a
     symlink, and resolving it would follow the link outside the Trash and
-    wrongly reject a valid delete."""
+    wrongly reject a valid delete. Because the final component is left
+    unresolved, a trailing `..` (e.g. `.Trash/..`) can survive into
+    `normalized` even after the parent is resolved - `parent.resolve()`
+    eliminates every `..` except one that lands in the name itself - so any
+    residual `..` component is explicitly rejected too."""
     normalized = trash_path.parent.resolve() / trash_path.name
-    if not any(part in (".Trash", ".Trashes") for part in normalized.parts):
+    if ".." in normalized.parts or not any(
+        part in (".Trash", ".Trashes") for part in normalized.parts
+    ):
         raise NotInTrashError(f"{trash_path} is not inside a Trash directory")
     if normalized.is_dir() and not normalized.is_symlink():
         shutil.rmtree(normalized, ignore_errors=False)
