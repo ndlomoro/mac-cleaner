@@ -73,8 +73,14 @@ def safe_delete(items: list[dict], category: str,
     report = DeleteReport(category=category, dry_run=dry_run)
 
     for item in items:
-        path_str = item["path"]
-        size = int(item.get("size", 0))
+        try:
+            path_str = item["path"]
+            size = int(item.get("size", 0))
+        except (KeyError, TypeError, ValueError) as e:
+            report.results.append(
+                PathResult(str(item), Outcome.FAILED, 0, f"malformed item: {e}"))
+            continue
+
         path = Path(path_str)
 
         protected, reason = is_protected(path, running)
@@ -94,11 +100,13 @@ def safe_delete(items: list[dict], category: str,
 
         try:
             trash_path = trash_item(path)
-            log_cleaning_action("Trashed", path_str)
-            report.results.append(
-                PathResult(path_str, Outcome.TRASHED, size, trash_path=str(trash_path)))
-        except (TrashError, OSError) as e:
+        except Exception as e:
             log_cleaning_action("Failed to Trash", f"{path_str} ({e})")
             report.results.append(PathResult(path_str, Outcome.FAILED, size, str(e)))
+            continue
+
+        report.results.append(
+            PathResult(path_str, Outcome.TRASHED, size, trash_path=str(trash_path)))
+        log_cleaning_action("Trashed", path_str)
 
     return report

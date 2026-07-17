@@ -116,3 +116,25 @@ def test_report_math_adds_up(tmp_path, fake_trash):
     assert len(report.trashed) == 2
     assert len(report.skipped) == 1
     assert report.trashed_bytes == 5
+
+
+def test_malformed_item_fails_without_killing_report(tmp_path, fake_trash):
+    good = tmp_path / "good.txt"; good.write_bytes(b"1234")
+    items = [{"size": 5}, {"path": str(good), "size": 4}]  # first item has no "path"
+    report = safe_delete(items, "caches")
+    assert len(report.results) == 2
+    assert len(report.failed) == 1
+    assert "malformed" in report.failed[0].reason
+    assert len(report.trashed) == 1
+    assert (fake_trash / "good.txt").exists()
+
+
+def test_unexpected_exception_reported_not_raised(tmp_path, monkeypatch):
+    def _boom(path):
+        raise RuntimeError("pyobjc bridge exploded")
+    monkeypatch.setattr(deleter_mod, "trash_item", _boom)
+    f = tmp_path / "cache.dat"; f.write_bytes(b"123")
+    report = safe_delete(_items(f), "caches")
+    assert len(report.failed) == 1
+    assert "exploded" in report.failed[0].reason
+    assert f.exists()
