@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 
 import core.deleter as deleter_mod
-from core.deleter import DeleteReport, Outcome, UserSelectionRequired, safe_delete
+from core.deleter import (
+    DeleteReport,
+    Outcome,
+    ReclaimReport,
+    UserSelectionRequired,
+    reclaim,
+    safe_delete,
+)
 from core.registry import UnknownCategoryError
 
 
@@ -149,3 +156,36 @@ def test_wrong_typed_path_fails_without_killing_report(tmp_path, fake_trash):
     assert len(report.failed) == 2
     assert all("malformed" in r.reason for r in report.failed)
     assert len(report.trashed) == 1
+
+
+def test_reclaim_deletes_only_our_items(tmp_path, fake_trash):
+    ours = tmp_path / "ours.txt"; ours.write_bytes(b"1234")
+    theirs = fake_trash / "users-own-trashed-file.txt"
+    theirs.write_text("user put this in the Trash last week")
+
+    report = safe_delete(_items(ours), "caches")
+    result = reclaim([report])
+
+    assert isinstance(result, ReclaimReport)
+    assert result.deleted == 1
+    assert result.freed_bytes == 4
+    assert not (fake_trash / "ours.txt").exists()
+    assert theirs.exists()  # the rest of the Trash is untouched
+
+
+def test_reclaim_ignores_dry_run_reports(tmp_path):
+    f = tmp_path / "f.txt"; f.write_bytes(b"12")
+    report = safe_delete(_items(f), "caches", dry_run=True)
+    result = reclaim([report])
+    assert result.deleted == 0
+    assert f.exists()
+
+
+def test_reclaim_counts_failures(tmp_path, fake_trash):
+    f = tmp_path / "f.txt"; f.write_bytes(b"12")
+    report = safe_delete(_items(f), "caches")
+    (fake_trash / "f.txt").unlink()  # someone emptied the Trash already
+    result = reclaim([report])
+    assert result.deleted == 0
+    # already-gone items are not failures; nothing to delete
+    assert result.failed == 0

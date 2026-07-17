@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.registry import get as get_category
 from core.safety import is_protected, running_apps
-from core.trash import TrashError, trash_item
+from core.trash import NotInTrashError, TrashError, delete_from_trash, trash_item
 from utils.logger import log_cleaning_action
 
 
@@ -109,3 +109,37 @@ def safe_delete(items: list[dict], category: str,
         log_cleaning_action("Trashed", path_str)
 
     return report
+
+
+@dataclass
+class ReclaimReport:
+    deleted: int = 0
+    failed: int = 0
+    freed_bytes: int = 0
+
+
+def reclaim(reports: list["DeleteReport"]) -> ReclaimReport:
+    """Permanently delete ONLY the items these reports moved to the Trash.
+
+    This is the app's irreversible 'empty now' step (typed confirmation happens
+    in the UI before calling this). Items already gone are silently fine.
+    """
+    result = ReclaimReport()
+    for report in reports:
+        if report.dry_run:
+            continue
+        for r in report.trashed:
+            if not r.trash_path:
+                continue
+            trash_path = Path(r.trash_path)
+            if not trash_path.exists() and not trash_path.is_symlink():
+                continue
+            try:
+                delete_from_trash(trash_path)
+                log_cleaning_action("Reclaimed", r.path)
+                result.deleted += 1
+                result.freed_bytes += r.size
+            except (NotInTrashError, OSError) as e:
+                log_cleaning_action("Failed to Reclaim", f"{r.path} ({e})")
+                result.failed += 1
+    return result
