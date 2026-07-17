@@ -28,10 +28,18 @@ def trash_item(path: Path) -> Path:
 def delete_from_trash(trash_path: Path) -> None:
     """Permanently delete an item we previously trashed. Guarded: the path must
     live inside a .Trash/.Trashes directory - this function must never be able
-    to touch anything else."""
-    if not any(part in (".Trash", ".Trashes") for part in trash_path.parts):
+    to touch anything else.
+
+    The parent chain is resolved (collapsing `..` segments and following any
+    symlinked ancestor directories) before the Trash-membership check, so
+    escapes via `..` or a symlinked ancestor are rejected. The final component
+    itself is deliberately NOT resolved: a legitimately-trashed item may be a
+    symlink, and resolving it would follow the link outside the Trash and
+    wrongly reject a valid delete."""
+    normalized = trash_path.parent.resolve() / trash_path.name
+    if not any(part in (".Trash", ".Trashes") for part in normalized.parts):
         raise NotInTrashError(f"{trash_path} is not inside a Trash directory")
-    if trash_path.is_dir() and not trash_path.is_symlink():
-        shutil.rmtree(trash_path, ignore_errors=False)
-    elif trash_path.exists() or trash_path.is_symlink():
-        trash_path.unlink()
+    if normalized.is_dir() and not normalized.is_symlink():
+        shutil.rmtree(normalized, ignore_errors=False)
+    elif normalized.exists() or normalized.is_symlink():
+        normalized.unlink()
