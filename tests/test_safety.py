@@ -87,3 +87,41 @@ def test_symlink_escape_caught(tmp_path):
     link.symlink_to(target)
     protected, _ = is_protected(link, running={})
     assert protected
+
+
+from core.safety import Owner, owning_app
+
+
+def test_owning_app_bundle_id_cache_dir():
+    p = HOME / "Library" / "Caches" / "com.tinyspeck.slackmacgap" / "Cache" / "f_0001"
+    owner = owning_app(p)
+    assert owner is not None
+    assert owner.bundle_id == "com.tinyspeck.slackmacgap"
+
+
+def test_owning_app_browser_profile_map():
+    p = HOME / "Library" / "Application Support" / "Google" / "Chrome" / "Default" / "History"
+    owner = owning_app(p)
+    assert owner == Owner("com.google.Chrome", "Chrome")
+
+
+def test_owning_app_none_for_ownerless_junk():
+    assert owning_app(Path("/tmp/foo.tmp")) is None
+    assert owning_app(Path("/private/var/folders/ab/xyz")) is None
+    # non-bundle-id cache folder name (no dot)
+    assert owning_app(HOME / "Library" / "Caches" / "SomeToolCache") is None
+
+
+def test_in_use_protected_when_owner_running():
+    p = HOME / "Library" / "Caches" / "com.tinyspeck.slackmacgap" / "Cache"
+    protected, reason = is_protected(
+        p, running={"com.tinyspeck.slackmacgap": "Slack"}
+    )
+    assert protected
+    assert reason == "Slack is running"
+
+
+def test_not_protected_when_owner_quit():
+    p = HOME / "Library" / "Caches" / "com.tinyspeck.slackmacgap" / "Cache"
+    protected, _ = is_protected(p, running={"com.apple.finder": "Finder"})
+    assert not protected
