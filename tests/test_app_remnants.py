@@ -97,3 +97,16 @@ def test_uninstall_app_returns_two_reports(tmp_path, monkeypatch):
     assert not bundle.exists()
     assert (trash_dir / "TestApp.app").exists()
     assert isinstance(result["leftovers"], DeleteReport)
+
+
+def test_uninstall_app_rejects_path_traversal(tmp_path, monkeypatch):
+    monkeypatch.setattr("cleaner.app_remnants.APPLICATIONS_DIR", tmp_path)
+    with pytest.raises(ValueError):
+        uninstall_app("../../private/etc/foo")
+    with pytest.raises(ValueError):
+        uninstall_app("")
+
+
+def test_clean_leftovers_rejects_path_traversal():
+    with pytest.raises(ValueError):
+        clean_leftovers("..")

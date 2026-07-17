@@ -8,13 +8,21 @@ from utils.helpers import get_dir_size
 APPLICATIONS_DIR = Path("/Applications")
 
 
+def _validate_app_name(app_name: str) -> None:
+    """App names are bare bundle names, never paths."""
+    if not app_name or "/" in app_name or "\x00" in app_name or app_name in (".", ".."):
+        raise ValueError(f"invalid app name: {app_name!r}")
+
+
 def clean_leftovers(app_name: str, dry_run: bool = False) -> DeleteReport:
+    _validate_app_name(app_name)
     return safe_delete(find_leftovers(app_name), "app_leftovers", dry_run=dry_run)
 
 
 def uninstall_app(app_name: str, dry_run: bool = False) -> dict:
     """Trash the .app bundle and its leftovers. Returns {'app': DeleteReport,
     'leftovers': DeleteReport}."""
+    _validate_app_name(app_name)
     bundle = APPLICATIONS_DIR / f"{app_name}.app"
     bundle_items = []
     if bundle.exists():
