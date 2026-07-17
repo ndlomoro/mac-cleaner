@@ -83,6 +83,7 @@ Initial assignments:
 | app_leftovers, launch_agents | CAUTION | – | ✓ |
 | tracking_data, browser_history | RISKY | – | ✓ |
 | downloads, ios_backups | RISKY | ✓ | ✓ |
+| large_files | RISKY | ✓ | ✓ |
 | recents | RISKY | – | ✗ → **Irreversible Action** |
 | snapshots | RISKY | – | ✗ → **Irreversible Action** |
 
