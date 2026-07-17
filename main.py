@@ -428,8 +428,8 @@ def run_snapshots():
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
 
+    print_category_header("snapshots")
     if not dry_run:
-        print_category_header("snapshots")
         if not confirm_irreversible(f"Deleting {len(snapshots)} snapshot(s)"):
             return
 
@@ -520,11 +520,7 @@ def run_app_uninstaller():
             return
         elif choice == "v":
             from scanner.app_remnants import find_leftovers
-            try:
-                leftovers_list = find_leftovers(app_name)
-            except ValueError as e:
-                console.print(f"[red]{e}[/red]")
-                return
+            leftovers_list = find_leftovers(app_name)
             view_app_leftovers(leftovers_list)
         elif choice in ("1", "2"):
             break
