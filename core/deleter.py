@@ -136,9 +136,9 @@ def reclaim(reports: list["DeleteReport"]) -> ReclaimReport:
                 continue
             try:
                 delete_from_trash(trash_path)
-                log_cleaning_action("Reclaimed", r.path)
                 result.deleted += 1
                 result.freed_bytes += r.size
+                log_cleaning_action("Reclaimed", r.path)
             except (NotInTrashError, OSError) as e:
                 log_cleaning_action("Failed to Reclaim", f"{r.path} ({e})")
                 result.failed += 1

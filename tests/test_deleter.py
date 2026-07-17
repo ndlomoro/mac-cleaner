@@ -189,3 +189,15 @@ def test_reclaim_counts_failures(tmp_path, fake_trash):
     assert result.deleted == 0
     # already-gone items are not failures; nothing to delete
     assert result.failed == 0
+
+
+def test_reclaim_reports_delete_failures(tmp_path, fake_trash, monkeypatch):
+    f = tmp_path / "f.txt"; f.write_bytes(b"12")
+    report = safe_delete(_items(f), "caches")
+    def _denied(path):
+        raise OSError("permission denied")
+    monkeypatch.setattr(deleter_mod, "delete_from_trash", _denied)
+    result = reclaim([report])
+    assert result.deleted == 0
+    assert result.failed == 1
+    assert result.freed_bytes == 0
