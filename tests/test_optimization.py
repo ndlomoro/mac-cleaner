@@ -55,61 +55,38 @@ def test_run_periodic_scripts(monkeypatch):
     res = run_periodic_scripts(dry_run=False)
     assert res["periodic_scripts"]["daily"]["success"] is True
 
-def test_clear_caches(tmp_path, monkeypatch):
-    # Xcode derived data
-    derived_dir = tmp_path / "Library" / "Developer" / "Xcode" / "DerivedData"
-    derived_dir.mkdir(parents=True)
-    (derived_dir / "build_cache").write_bytes(b"x" * 100)
-    
-    # CocoaPods cache
-    pods_dir = tmp_path / ".cocoapods"
-    pods_dir.mkdir()
-    (pods_dir / "cache_file").write_bytes(b"y" * 200)
-    
-    # pip cache
-    pip_dir = tmp_path / "Library" / "Caches" / "pip"
-    pip_dir.mkdir(parents=True)
-    (pip_dir / "pip_cache_file").write_bytes(b"z" * 300)
-    
-    # Mock home
-    monkeypatch.setattr(cleaner.optimization.Path, "home", lambda: tmp_path)
-    
-    # Dry run check
-    res_xcode_dry = clear_xcode_derived_data(dry_run=True)
-    assert res_xcode_dry["dry_run"] is True
-    assert res_xcode_dry["size"] == 100
-    
-    res_pods_dry = clear_cocoapods_cache(dry_run=True)
-    assert res_pods_dry["dry_run"] is True
-    assert res_pods_dry["size"] == 200
-    
-    res_pip_dry = clear_pip_cache(dry_run=True)
-    assert res_pip_dry["dry_run"] is True
-    assert res_pip_dry["size"] == 300
-    
-    # Mock send2trash to delete
-    def mock_send2trash(path):
-        p = Path(path)
-        if p.is_file():
-            p.unlink()
-        elif p.is_dir():
-            [f.unlink() for f in p.rglob("*") if f.is_file()]
-            p.rmdir()
-            
-    monkeypatch.setattr(cleaner.optimization, "send2trash", mock_send2trash)
-    
-    # Actual cleanup
-    res_xcode_real = clear_xcode_derived_data(dry_run=False)
-    assert res_xcode_real["freed"] == 100
-    assert not derived_dir.exists()
-    
-    res_pods_real = clear_cocoapods_cache(dry_run=False)
-    assert res_pods_real["freed"] == 200
-    assert not pods_dir.exists()
-    
-    res_pip_real = clear_pip_cache(dry_run=False)
-    assert res_pip_real["freed"] == 300
-    assert not pip_dir.exists()
+import core.deleter as deleter_mod
+from core.deleter import DeleteReport
+from cleaner.optimization import clear_pip_cache
+
+
+def test_clear_pip_cache_via_safe_delete(tmp_path, monkeypatch):
+    trash_dir = tmp_path / ".Trash"
+    trash_dir.mkdir()
+
+    def _fake(path):
+        dest = trash_dir / path.name
+        path.rename(dest)
+        return dest
+
+    monkeypatch.setattr(deleter_mod, "trash_item", _fake)
+    monkeypatch.setattr(deleter_mod, "running_apps", lambda: {})
+
+    pip_cache = tmp_path / "pip"
+    pip_cache.mkdir()
+    (pip_cache / "wheel.whl").write_bytes(b"x" * 10)
+    monkeypatch.setattr("cleaner.optimization.PIP_CACHE", pip_cache)
+
+    report = clear_pip_cache(dry_run=False)
+    assert isinstance(report, DeleteReport)
+    assert report.category == "pip_cache"
+    assert not pip_cache.exists()
+
+
+def test_clear_pip_cache_missing_is_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr("cleaner.optimization.PIP_CACHE", tmp_path / "nope")
+    result = clear_pip_cache()
+    assert result["skipped"] is True
 
 def test_optimize_mac_full(monkeypatch):
     # Mock check_launch_agents

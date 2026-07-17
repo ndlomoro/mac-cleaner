@@ -1,11 +1,14 @@
 """Optimization cleaner - handles brew cleanup, dev caches, and system maintenance."""
-import json
 from pathlib import Path
-from send2trash import send2trash
 
-from utils.helpers import run_command, format_size
+from core.deleter import DeleteReport, safe_delete
+from utils.helpers import run_command, get_dir_size
 from scanner.optimization import check_launch_agents
 from utils.logger import log_cleaning_action
+
+DERIVED_DATA = Path.home() / "Library" / "Developer" / "Xcode" / "DerivedData"
+PODS_CACHE = Path.home() / ".cocoapods"
+PIP_CACHE = Path.home() / "Library" / "Caches" / "pip"
 
 
 def run_brew_cleanup(dry_run: bool = False) -> dict:
@@ -61,56 +64,19 @@ def run_periodic_scripts(dry_run: bool = False) -> dict:
     return {"periodic_scripts": results}
 
 
-def clear_xcode_derived_data(dry_run: bool = False) -> dict:
-    """Clear Xcode derived data and build caches."""
-    derived_data = Path.home() / "Library" / "Developer" / "Xcode" / "DerivedData"
-    
-    if not derived_data.exists():
-        return {"message": "No Xcode derived data found", "skipped": True}
-
-    size = sum(f.stat().st_size for f in derived_data.rglob("*") if f.is_file())
-
-    if dry_run:
-        log_cleaning_action("Would Trash Xcode DerivedData", str(derived_data), dry_run=True)
-        return {
-            "message": f"Xcode DerivedData: {format_size(size)} ready to clear",
-            "size": size,
-            "dry_run": True,
-        }
-
-    try:
-        send2trash(derived_data)
-        log_cleaning_action("Trashed Xcode DerivedData", str(derived_data))
-        return {"message": f"Cleared Xcode DerivedData ({format_size(size)})", "freed": size}
-    except Exception as e:
-        log_cleaning_action("Failed to Trash Xcode DerivedData", str(e))
-        return {"message": "Failed to clear Xcode data", "error": str(e)}
+def _clear_cache_dir(path: Path, category: str, dry_run: bool) -> DeleteReport | dict:
+    if not path.exists():
+        return {"message": f"No {category} found", "skipped": True}
+    items = [{"path": str(path), "size": get_dir_size(path)}]
+    return safe_delete(items, category, dry_run=dry_run)
 
 
-def clear_cocoapods_cache(dry_run: bool = False) -> dict:
-    """Clear CocoaPods cache."""
-    pods_cache = Path.home() / ".cocoapods"
+def clear_xcode_derived_data(dry_run: bool = False) -> DeleteReport | dict:
+    return _clear_cache_dir(DERIVED_DATA, "xcode_derived_data", dry_run)
 
-    if not pods_cache.exists():
-        return {"message": "No CocoaPods cache found", "skipped": True}
 
-    size = sum(f.stat().st_size for f in pods_cache.rglob("*") if f.is_file())
-
-    if dry_run:
-        log_cleaning_action("Would Trash CocoaPods Cache", str(pods_cache), dry_run=True)
-        return {
-            "message": f"CocoaPods cache: {format_size(size)} ready to clear",
-            "size": size,
-            "dry_run": True,
-        }
-
-    try:
-        send2trash(pods_cache)
-        log_cleaning_action("Trashed CocoaPods Cache", str(pods_cache))
-        return {"message": f"Cleared CocoaPods cache ({format_size(size)})", "freed": size}
-    except Exception as e:
-        log_cleaning_action("Failed to Trash CocoaPods Cache", str(e))
-        return {"message": "Failed to clear CocoaPods cache", "error": str(e)}
+def clear_cocoapods_cache(dry_run: bool = False) -> DeleteReport | dict:
+    return _clear_cache_dir(PODS_CACHE, "cocoapods_cache", dry_run)
 
 
 def clear_npm_cache(dry_run: bool = False) -> dict:
@@ -130,30 +96,8 @@ def clear_npm_cache(dry_run: bool = False) -> dict:
     return {"message": "npm cache cleanup failed or npm not installed", "skipped": True}
 
 
-def clear_pip_cache(dry_run: bool = False) -> dict:
-    """Clear pip cache."""
-    pip_cache = Path.home() / "Library" / "Caches" / "pip"
-
-    if not pip_cache.exists():
-        return {"message": "No pip cache found", "skipped": True}
-
-    size = sum(f.stat().st_size for f in pip_cache.rglob("*") if f.is_file())
-
-    if dry_run:
-        log_cleaning_action("Would Trash Pip Cache", str(pip_cache), dry_run=True)
-        return {
-            "message": f"pip cache: {format_size(size)} ready to clear",
-            "size": size,
-            "dry_run": True,
-        }
-
-    try:
-        send2trash(pip_cache)
-        log_cleaning_action("Trashed Pip Cache", str(pip_cache))
-        return {"message": f"Cleared pip cache ({format_size(size)})", "freed": size}
-    except Exception as e:
-        log_cleaning_action("Failed Pip Cache", str(e))
-        return {"message": "Failed to clear pip cache", "error": str(e)}
+def clear_pip_cache(dry_run: bool = False) -> DeleteReport | dict:
+    return _clear_cache_dir(PIP_CACHE, "pip_cache", dry_run)
 
 
 def optimize_mac(dry_run: bool = False) -> dict:
