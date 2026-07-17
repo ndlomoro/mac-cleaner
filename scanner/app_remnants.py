@@ -36,36 +36,38 @@ def find_leftovers(app_name: str) -> list[dict]:
                     if item.is_file() or item.is_dir():
                         try:
                             size = get_dir_size(item) if item.is_dir() else item.stat().st_size
-                            leftovers.append({
-                                "path": str(item),
-                                "size": size,
-                                "type": "dir" if item.is_dir() else "file",
-                            })
+                            if not any(str(item) == l["path"] for l in leftovers):
+                                leftovers.append({
+                                    "path": str(item),
+                                    "size": size,
+                                    "type": "dir" if item.is_dir() else "file",
+                                })
                         except (OSError, PermissionError):
                             pass
             except (OSError, PermissionError):
                 pass
 
     # Also check by lowercase name match
-    for base_dir, *patterns in LEFTOVER_PATHS:
-        if not base_dir.exists():
-            continue
-        try:
-            for item in base_dir.iterdir():
-                if name_lower in item.name.lower() and item.name.lower() != name_lower:
-                    already = any(str(item) in [l["path"] for l in leftovers])
-                    if not already:
-                        try:
-                            size = get_dir_size(item) if item.is_dir() else item.stat().st_size
-                            leftovers.append({
-                                "path": str(item),
-                                "size": size,
-                                "type": "dir" if item.is_dir() else "file",
-                            })
-                        except (OSError, PermissionError):
-                            pass
-        except (OSError, PermissionError):
-            pass
+    if len(name_lower) >= 3:
+        for base_dir, *patterns in LEFTOVER_PATHS:
+            if not base_dir.exists():
+                continue
+            try:
+                for item in base_dir.iterdir():
+                    if name_lower in item.name.lower() and item.name.lower() != name_lower:
+                        already = any(str(item) == l["path"] for l in leftovers)
+                        if not already:
+                            try:
+                                size = get_dir_size(item) if item.is_dir() else item.stat().st_size
+                                leftovers.append({
+                                    "path": str(item),
+                                    "size": size,
+                                    "type": "dir" if item.is_dir() else "file",
+                                })
+                            except (OSError, PermissionError):
+                                pass
+            except (OSError, PermissionError):
+                pass
 
     return leftovers
 

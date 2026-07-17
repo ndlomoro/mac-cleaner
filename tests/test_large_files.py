@@ -35,3 +35,26 @@ def test_find_large_files_skips_extensions(tmp_path, monkeypatch):
     
     # Should be empty because .txt is skipped
     assert len(results) == 0
+
+def test_clean_large_files(tmp_path, monkeypatch):
+    from cleaner.large_files import clean_large_files
+    
+    # Create a test file
+    large_dmg = tmp_path / "large.dmg"
+    large_dmg.write_bytes(b"y" * 1000)
+    
+    # Test dry run
+    res = clean_large_files([str(large_dmg)], dry_run=True)
+    assert res["deleted"] == 1
+    assert res["freed_bytes"] == 1000
+    assert large_dmg.exists()
+    
+    # Mock send2trash
+    monkeypatch.setattr("cleaner.large_files.send2trash", lambda p: Path(p).unlink())
+    
+    # Test actual clean
+    res2 = clean_large_files([str(large_dmg)], dry_run=False)
+    assert res2["deleted"] == 1
+    assert res2["freed_bytes"] == 1000
+    assert not large_dmg.exists()
+

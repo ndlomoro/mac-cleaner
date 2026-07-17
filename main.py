@@ -195,11 +195,86 @@ def show_main_menu() -> str:
     return Prompt.ask("\n  Choose", default="1")
 
 
+def view_system_data_files(results: list):
+    """List files in system data scan results."""
+    for r in results:
+        console.print(f"\n[bold cyan]{r.name}[/bold cyan] ({r.file_count} items, {r.human_size})")
+        table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+        table.add_column("Path", style="white")
+        table.add_column("Size", justify="right", style="magenta")
+        # Show up to 30 files per category
+        for f in r.files[:30]:
+            path = f["path"]
+            if len(path) > 90:
+                path = "..." + path[-87:]
+            table.add_row(path, format_size(f["size"]))
+        console.print(table)
+        if len(r.files) > 30:
+            console.print(f"  ... and {len(r.files) - 30} more items", style="dim")
+
+
+def view_privacy_files(browser_data: list, tracking_data: list):
+    """List privacy database and cache paths."""
+    console.print("\n[bold cyan]Privacy files/folders to be cleared:[/bold cyan]")
+    table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+    table.add_column("Type/Browser", style="cyan")
+    table.add_column("Path", style="white")
+    table.add_column("Size", justify="right", style="magenta")
+
+    for item in browser_data:
+        path = item["path"]
+        if len(path) > 90:
+            path = "..." + path[-87:]
+        table.add_row(f"{item['browser']} {item['type']}", path, format_size(item["size"]))
+    for item in tracking_data:
+        path = item["path"]
+        if len(path) > 90:
+            path = "..." + path[-87:]
+        table.add_row(item["type"].capitalize(), path, format_size(item["size"]))
+
+    console.print(table)
+
+
+def view_app_leftovers(leftovers: list):
+    """List leftover paths to be deleted."""
+    console.print("\n[bold cyan]App leftovers to be deleted:[/bold cyan]")
+    table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+    table.add_column("Type", style="cyan")
+    table.add_column("Path", style="white")
+    table.add_column("Size", justify="right", style="magenta")
+
+    for item in leftovers:
+        path = item["path"]
+        if len(path) > 90:
+            path = "..." + path[-87:]
+        table.add_row(item["type"].upper(), path, format_size(item["size"]))
+
+    console.print(table)
+
+
+def view_optimization_files():
+    """Show paths of caches that will be cleared."""
+    console.print("\n[bold cyan]Optimization cache folders to be cleared:[/bold cyan]")
+    table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+    table.add_column("Target", style="cyan")
+    table.add_column("Path", style="white")
+
+    derived_data = Path.home() / "Library" / "Developer" / "Xcode" / "DerivedData"
+    pods_cache = Path.home() / ".cocoapods"
+    pip_cache = Path.home() / "Library" / "Caches" / "pip"
+
+    for name, path in [("Xcode DerivedData", derived_data), ("CocoaPods Cache", pods_cache), ("Pip Cache", pip_cache)]:
+        if path.exists():
+            table.add_row(name, str(path))
+    console.print(table)
+
+
 def show_scan_menu() -> str:
     """Show scan action menu."""
     console.print("\n[bold]Actions[/bold]")
     console.print("  [1] Dry Run    [Preview what would be cleaned]")
     console.print("  [2] Clean      [Actually delete files]")
+    console.print("  [v] View Files [List all files to be deleted]")
     console.print("  [b] Back")
 
     return Prompt.ask("\n  Choose", default="1")
@@ -221,9 +296,16 @@ def run_system_data_scan():
     if not results:
         return
 
-    choice = show_scan_menu()
-    if choice == "b":
-        return
+    while True:
+        choice = show_scan_menu()
+        if choice == "b":
+            return
+        elif choice == "v":
+            view_system_data_files(results)
+        elif choice in ("1", "2"):
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
 
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
@@ -281,9 +363,16 @@ def run_snapshots():
     if not snapshots:
         return
 
-    choice = show_scan_menu()
-    if choice == "b":
-        return
+    while True:
+        choice = show_scan_menu()
+        if choice == "b":
+            return
+        elif choice == "v":
+            show_snapshots(snapshots)
+        elif choice in ("1", "2"):
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
 
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
@@ -308,9 +397,16 @@ def run_privacy_scan():
     if not browser_data and not tracking_data:
         return
 
-    choice = show_scan_menu()
-    if choice == "b":
-        return
+    while True:
+        choice = show_scan_menu()
+        if choice == "b":
+            return
+        elif choice == "v":
+            view_privacy_files(browser_data, tracking_data)
+        elif choice in ("1", "2"):
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
 
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
@@ -331,13 +427,32 @@ def run_app_uninstaller():
     if not apps:
         return
 
-    app_name = Prompt.ask("Enter app name to uninstall", default="")
+    app_name = Prompt.ask("Enter app name or list number to uninstall", default="")
     if not app_name:
         return
 
-    choice = show_scan_menu()
-    if choice == "b":
-        return
+    # If user entered a number, map it to the corresponding app name in the list
+    if app_name.isdigit():
+        idx = int(app_name) - 1
+        if 0 <= idx < len(apps):
+            app_name = apps[idx]["name"]
+            console.print(f"[yellow]Resolved selection to: {app_name}[/yellow]")
+        else:
+            console.print("[red]Invalid selection number[/red]")
+            return
+
+    while True:
+        choice = show_scan_menu()
+        if choice == "b":
+            return
+        elif choice == "v":
+            from scanner.app_remnants import find_leftovers
+            leftovers_list = find_leftovers(app_name)
+            view_app_leftovers(leftovers_list)
+        elif choice in ("1", "2"):
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
 
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
@@ -361,9 +476,16 @@ def run_optimization():
     agents = check_launch_agents()
     show_launch_agents(agents)
 
-    choice = show_scan_menu()
-    if choice == "b":
-        return
+    while True:
+        choice = show_scan_menu()
+        if choice == "b":
+            return
+        elif choice == "v":
+            view_optimization_files()
+        elif choice in ("1", "2"):
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
 
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
