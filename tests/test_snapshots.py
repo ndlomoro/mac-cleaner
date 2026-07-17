@@ -51,3 +51,19 @@ def test_clean_snapshots_real(monkeypatch):
     res = clean_snapshots(dry_run=False)
     assert res["deleted"] == 1
     assert res["failed"] == 0
+
+def test_clean_snapshots_reports_reclaimed_bytes(monkeypatch):
+    monkeypatch.setattr("cleaner.snapshots.list_snapshots",
+                        lambda: [{"name": "com.apple.TimeMachine.2026-07-01-120000.local"}])
+    monkeypatch.setattr("cleaner.snapshots.delete_all_snapshots",
+                        lambda: (["Deleted snapshot: x"], []))
+    frees = iter([100_000, 100_500])  # before, after
+
+    class FakeUsage:
+        def __init__(self, free):
+            self.free = free
+
+    monkeypatch.setattr("cleaner.snapshots.shutil.disk_usage",
+                        lambda _: FakeUsage(next(frees)))
+    result = clean_snapshots(dry_run=False)
+    assert result["reclaimed_bytes"] == 500
