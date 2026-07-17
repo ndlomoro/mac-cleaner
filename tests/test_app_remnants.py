@@ -2,8 +2,10 @@ import pytest
 from pathlib import Path
 import scanner.app_remnants
 import cleaner.app_remnants
+import core.deleter as deleter_mod
+from core.deleter import DeleteReport
 from scanner.app_remnants import find_leftovers, get_installed_apps
-from cleaner.app_remnants import uninstall_app
+from cleaner.app_remnants import clean_leftovers, uninstall_app
 
 def test_get_installed_apps(tmp_path, monkeypatch):
     # Mock /Applications path
@@ -20,21 +22,21 @@ def test_get_installed_apps(tmp_path, monkeypatch):
     # path inside function or mocking Path
     pass
 
-def test_find_leftovers_and_uninstall(tmp_path, monkeypatch):
+def test_find_leftovers(tmp_path, monkeypatch):
     # Setup mock leftover directories
     app_support = tmp_path / "Application Support"
     app_support.mkdir()
-    
+
     pref_dir = tmp_path / "Preferences"
     pref_dir.mkdir()
-    
+
     # Leftover files
     sup_file = app_support / "TestApp_data"
     sup_file.write_bytes(b"support data")
-    
+
     pref_file = pref_dir / "com.test.TestApp.plist"
     pref_file.write_bytes(b"pref data")
-    
+
     # Mock LIBRARY to point to our tmp_path
     monkeypatch.setattr(scanner.app_remnants, "LIBRARY", tmp_path)
     # Mock LEFTOVER_PATHS to match our mock paths
@@ -43,47 +45,55 @@ def test_find_leftovers_and_uninstall(tmp_path, monkeypatch):
         (pref_dir, "com.*{app}*", "*{app}*"),
     ]
     monkeypatch.setattr(scanner.app_remnants, "LEFTOVER_PATHS", mock_leftover_paths)
-    
+
     leftovers = find_leftovers("TestApp")
-    
+
     # Verify leftovers found
     assert len(leftovers) == 2
     paths = [l["path"] for l in leftovers]
     assert str(sup_file) in paths
     assert str(pref_file) in paths
-    
-    # Mock clean_leftovers / uninstall_app references
-    monkeypatch.setattr(cleaner.app_remnants, "find_leftovers", lambda name: leftovers)
-    
-    # Mock glob for /Applications
-    monkeypatch.setattr("glob.glob", lambda pattern: [str(tmp_path / "Applications" / "TestApp.app")])
-    
-    # Create mock App path
-    mock_app_dir = tmp_path / "Applications" / "TestApp.app"
-    mock_app_dir.mkdir(parents=True)
-    
-    # Test uninstall - dry run
-    res_dry = uninstall_app("TestApp", dry_run=True)
-    assert res_dry["app_removed"] is True
-    assert res_dry["leftovers"]["deleted"] == 2
-    assert mock_app_dir.exists()
-    assert sup_file.exists()
-    
-    # Mock send2trash
-    def mock_send2trash(path):
-        p = Path(path)
-        if p.is_file():
-            p.unlink()
-        elif p.is_dir():
-            [f.unlink() for f in p.rglob("*") if f.is_file()]
-            p.rmdir()
-            
-    monkeypatch.setattr(cleaner.app_remnants, "send2trash", mock_send2trash)
-    
-    # Test uninstall - real
-    res_real = uninstall_app("TestApp", dry_run=False)
-    assert res_real["app_removed"] is True
-    assert res_real["leftovers"]["deleted"] == 2
-    assert not mock_app_dir.exists()
-    assert not sup_file.exists()
-    assert not pref_file.exists()
+
+
+def _fake_trash(monkeypatch, tmp_path):
+    trash_dir = tmp_path / ".Trash"
+    trash_dir.mkdir(exist_ok=True)
+
+    def _fake(path):
+        dest = trash_dir / path.name
+        path.rename(dest)
+        return dest
+
+    monkeypatch.setattr(deleter_mod, "trash_item", _fake)
+    monkeypatch.setattr(deleter_mod, "running_apps", lambda: {})
+    return trash_dir
+
+
+def test_clean_leftovers_reports(tmp_path, monkeypatch):
+    _fake_trash(monkeypatch, tmp_path)
+    leftover = tmp_path / "com.testapp.plist"
+    leftover.write_text("x")
+    monkeypatch.setattr("cleaner.app_remnants.find_leftovers",
+                        lambda name: [{"path": str(leftover), "size": 1, "type": "file"}])
+    report = clean_leftovers("TestApp", dry_run=False)
+    assert isinstance(report, DeleteReport)
+    assert report.category == "app_leftovers"
+    assert not leftover.exists()
+
+
+def test_uninstall_app_returns_two_reports(tmp_path, monkeypatch):
+    trash_dir = _fake_trash(monkeypatch, tmp_path)
+    apps_dir = tmp_path / "Applications"
+    apps_dir.mkdir()
+    bundle = apps_dir / "TestApp.app"
+    bundle.mkdir()
+    monkeypatch.setattr("cleaner.app_remnants.APPLICATIONS_DIR", apps_dir)
+    monkeypatch.setattr("cleaner.app_remnants.find_leftovers", lambda name: [])
+
+    result = uninstall_app("TestApp", dry_run=False)
+    assert isinstance(result["app"], DeleteReport)
+    assert result["app"].category == "app_bundle"
+    assert len(result["app"].trashed) == 1
+    assert not bundle.exists()
+    assert (trash_dir / "TestApp.app").exists()
+    assert isinstance(result["leftovers"], DeleteReport)
