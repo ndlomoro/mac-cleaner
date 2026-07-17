@@ -138,3 +138,14 @@ def test_unexpected_exception_reported_not_raised(tmp_path, monkeypatch):
     assert len(report.failed) == 1
     assert "exploded" in report.failed[0].reason
     assert f.exists()
+
+
+def test_wrong_typed_path_fails_without_killing_report(tmp_path, fake_trash):
+    good = tmp_path / "good.txt"; good.write_bytes(b"12")
+    items = [{"path": 123, "size": 1}, {"path": None, "size": 1},
+             {"path": str(good), "size": 2}]
+    report = safe_delete(items, "caches")
+    assert len(report.results) == 3
+    assert len(report.failed) == 2
+    assert all("malformed" in r.reason for r in report.failed)
+    assert len(report.trashed) == 1

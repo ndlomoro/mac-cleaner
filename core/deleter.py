@@ -76,12 +76,11 @@ def safe_delete(items: list[dict], category: str,
         try:
             path_str = item["path"]
             size = int(item.get("size", 0))
+            path = Path(path_str)
         except (KeyError, TypeError, ValueError) as e:
             report.results.append(
                 PathResult(str(item), Outcome.FAILED, 0, f"malformed item: {e}"))
             continue
-
-        path = Path(path_str)
 
         protected, reason = is_protected(path, running)
         if protected:
