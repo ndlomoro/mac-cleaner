@@ -266,19 +266,24 @@ def view_system_data_files(results: list):
 
 
 def view_privacy_files(browser_data: list, tracking_data: list):
-    """List privacy database and cache paths."""
-    console.print("\n[bold cyan]Privacy files/folders to be cleared:[/bold cyan]")
+    """List exactly what clean_privacy() will act on, so shown == done.
+    Filters mirror cleaner/privacy.py's clean_browser_data / clean_tracking_data -
+    keep them identical to that source of truth if either changes."""
+    console.print("\n[bold cyan]Privacy data that would be cleared:[/bold cyan]")
     table = Table(box=box.MINIMAL_DOUBLE_HEAD)
     table.add_column("Type/Browser", style="cyan")
     table.add_column("Path", style="white")
     table.add_column("Size", justify="right", style="magenta")
 
-    for item in browser_data:
+    cleared_browser = [i for i in browser_data if i["type"] == "caches"]
+    cleared_tracking = [i for i in tracking_data if "Preferences/ByHost" not in i["path"]]
+
+    for item in cleared_browser:
         path = item["path"]
         if len(path) > 90:
             path = "..." + path[-87:]
         table.add_row(f"{item['browser']} {item['type']}", path, format_size(item["size"]))
-    for item in tracking_data:
+    for item in cleared_tracking:
         path = item["path"]
         if len(path) > 90:
             path = "..." + path[-87:]
@@ -689,6 +694,14 @@ def run_space_finder():
             selected.setdefault(category, []).append(f)
     if not selected:
         console.print("[yellow]No valid items selected[/yellow]")
+        return
+
+    total = sum(f["size"] for items in selected.values() for f in items)
+    count = sum(len(items) for items in selected.values())
+    if not Confirm.ask(
+        f"Move {count} item(s) (~{format_size(total)}) to Trash?", default=False
+    ):
+        console.print("[dim]Cancelled - nothing was touched.[/dim]")
         return
 
     from core.deleter import safe_delete

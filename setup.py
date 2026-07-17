@@ -35,8 +35,10 @@ OPTIONS = {
         "rich.markup",
         "pygments",
         "Foundation",
+        "AppKit",
     ],
     "packages": [
+        "core",
         "scanner",
         "cleaner",
         "utils",

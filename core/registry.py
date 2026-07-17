@@ -55,7 +55,7 @@ _CATEGORIES = [
     Category("launch_agents", Level.CAUTION,
              "Programs set to run automatically at login; removing one stops that behavior."),
     Category("tracking_data", Level.RISKY,
-             "Diagnostic reports and per-host preferences; may include data you'd rather keep private."),
+             "Diagnostic reports and app tracking traces; may include data you'd rather keep private."),
     Category("browser_history", Level.RISKY,
              "Your browsing history; once cleared, it cannot be recovered from the browser."),
     Category("downloads", Level.RISKY,
