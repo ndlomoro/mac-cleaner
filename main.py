@@ -25,9 +25,60 @@ from scanner.optimization import check_launch_agents
 from cleaner.optimization import optimize_mac
 from cleaner.system_data import clean_system_data
 from cleaner.snapshots import clean_snapshots
-from cleaner.privacy import clean_privacy
+from cleaner.privacy import clean_privacy, clear_recently_used
 
 console = Console()
+
+from core import registry
+from core.deleter import DeleteReport, reclaim
+from scanner.system_data import scan_space_finder
+
+LEVEL_STYLES = {"SAFE": "green", "CAUTION": "yellow", "RISKY": "red"}
+
+
+def print_category_header(key: str):
+    """Level + plain-English explanation, shown before a category's items."""
+    cat = registry.get(key)
+    style = LEVEL_STYLES[cat.level.value]
+    label = f"[{style}]\\[{cat.level.value}][/{style}]"
+    suffix = " [dim](cleared directly - not recoverable via Trash)[/dim]" if not cat.via_trash else ""
+    console.print(f"{label} {cat.explanation}{suffix}")
+
+
+def show_delete_report(report: DeleteReport):
+    """Truthful summary: Trashed (not 'freed'), skips with reasons, failures."""
+    verb = "Would move to Trash" if report.dry_run else "Moved to Trash"
+    console.print(f"  [green]{verb}:[/green] {len(report.trashed)} items "
+                  f"(~{format_size(report.trashed_bytes)})")
+    for r in report.skipped:
+        console.print(f"  [yellow]Skipped:[/yellow] {r.path[-60:]} - {r.reason}")
+    for r in report.failed:
+        console.print(f"  [red]Failed:[/red] {r.path[-60:]} - {r.reason}")
+
+
+def confirm_irreversible(what: str) -> bool:
+    """Typed gate for Irreversible Actions. Returns True only on literal 'yes'."""
+    console.print(f"\n[bold red]{what} cannot be undone.[/bold red]")
+    answer = Prompt.ask("Type 'yes' to proceed", default="no")
+    return answer.strip().lower() == "yes"
+
+
+def offer_reclaim(reports: list[DeleteReport]):
+    """After a real clean: offer surgical empty of exactly what we trashed."""
+    real = [r for r in reports if not r.dry_run]
+    total = sum(r.trashed_bytes for r in real)
+    if not total:
+        return
+    console.print(f"\n[bold]~{format_size(total)} moved to Trash[/bold] "
+                  f"- recoverable until emptied.")
+    if confirm_irreversible(f"Permanently deleting these items to reclaim ~{format_size(total)}"):
+        result = reclaim(real)
+        console.print(f"[green]Reclaimed ~{format_size(result.freed_bytes)} "
+                      f"({result.deleted} items)[/green]")
+        if result.failed:
+            console.print(f"[red]Failed to reclaim {result.failed} items[/red]")
+    else:
+        console.print("[dim]Kept in Trash - recover anytime with Put Back.[/dim]")
 
 
 def print_header():
@@ -190,6 +241,7 @@ def show_main_menu() -> str:
     console.print("  [6] App Uninstaller      [Remove apps + leftovers]")
     console.print("  [7] Optimization         [Brew cleanup, dev caches]")
     console.print("  [8] Full Scan            [Run all scans]")
+    console.print("  [9] Space Finder         [Old downloads, iOS backups - pick individually]")
     console.print("  [q] Quit")
 
     return Prompt.ask("\n  Choose", default="1")
@@ -313,17 +365,16 @@ def run_system_data_scan():
     console.print(f"\n{label}[bold]Cleaning system data...[/bold]")
     cleanup = clean_system_data(dry_run=dry_run)
 
-    total_freed = 0
-    total_deleted = 0
-    for name, stats in cleanup.items():
-        freed = stats.get("freed_bytes", 0)
-        deleted = stats.get("deleted", 0)
-        total_freed += freed
-        total_deleted += deleted
-        status = "[green]OK[/green]" if not stats.get("errors") else "[yellow]WARN[/yellow]"
-        console.print(f"  {status} {name}: {deleted} items ({format_size(freed)})")
+    reports = []
+    for category, report in cleanup.items():
+        print_category_header(category)
+        show_delete_report(report)
+        reports.append(report)
 
-    console.print(f"\n[bold]Total: {total_deleted} items, {format_size(total_freed)} {'would be ' if dry_run else ''}freed[/bold]")
+    total = sum(r.trashed_bytes for r in reports)
+    verb = "would be moved to Trash" if dry_run else "moved to Trash"
+    console.print(f"\n[bold]Total: ~{format_size(total)} {verb}[/bold]")
+    offer_reclaim(reports)
 
 
 def run_large_files_scan():
@@ -377,12 +428,23 @@ def run_snapshots():
     dry_run = choice == "1"
     label = "[yellow]DRY RUN[/yellow] - " if dry_run else ""
 
+    if not dry_run:
+        print_category_header("snapshots")
+        if not confirm_irreversible(f"Deleting {len(snapshots)} snapshot(s)"):
+            return
+
     console.print(f"\n{label}[bold]Deleting snapshots...[/bold]")
     result = clean_snapshots(dry_run=dry_run)
     if dry_run:
         console.print(f"[yellow]Would delete {result.get('count', 0)} snapshot(s)[/yellow]")
     else:
-        console.print(f"[green]Deleted: {result.get('deleted', 0)}[/green]")
+        reclaimed_bytes = result.get("reclaimed_bytes", 0)
+        reclaimed_text = (
+            "unknown (couldn't isolate the freed space)" if reclaimed_bytes == 0
+            else f"~{format_size(reclaimed_bytes)}"
+        )
+        console.print(f"[green]Deleted: {result.get('deleted', 0)} - "
+                      f"Reclaimed {reclaimed_text}[/green]")
         if result.get("failed"):
             console.print(f"[red]Failed: {result.get('failed', 0)}[/red]")
 
@@ -413,10 +475,21 @@ def run_privacy_scan():
 
     console.print(f"\n{label}[bold]Cleaning privacy data...[/bold]")
     result = clean_privacy(dry_run=dry_run)
-    for category, stats in result.items():
-        deleted = stats.get("deleted", stats.get("cleared", 0))
-        freed = stats.get("freed_bytes", 0)
-        console.print(f"  [green]OK[/green] {category}: {deleted} items ({format_size(freed)})")
+    reports = []
+    for category, report in result.items():
+        print_category_header(category)
+        show_delete_report(report)
+        reports.append(report)
+    offer_reclaim(reports)
+
+    # Recents: Irreversible Action, gated separately
+    print_category_header("recents")
+    if dry_run:
+        stats = clear_recently_used(dry_run=True)
+        console.print(f"  Would clear {stats['cleared']} recent-items list(s)")
+    elif confirm_irreversible("Clearing the recently-used list"):
+        stats = clear_recently_used(dry_run=False)
+        console.print(f"  [green]Cleared {stats['cleared']} recent-items list(s)[/green]")
 
 
 def run_app_uninstaller():
@@ -447,7 +520,11 @@ def run_app_uninstaller():
             return
         elif choice == "v":
             from scanner.app_remnants import find_leftovers
-            leftovers_list = find_leftovers(app_name)
+            try:
+                leftovers_list = find_leftovers(app_name)
+            except ValueError as e:
+                console.print(f"[red]{e}[/red]")
+                return
             view_app_leftovers(leftovers_list)
         elif choice in ("1", "2"):
             break
@@ -459,13 +536,16 @@ def run_app_uninstaller():
 
     from cleaner.app_remnants import uninstall_app
     console.print(f"\n{label}[bold]Uninstalling {app_name}...[/bold]")
-    result = uninstall_app(app_name, dry_run=dry_run)
-    if result.get("app_removed"):
-        console.print(f"[green]Removed {app_name}.app[/green]")
-    leftovers = result.get("leftovers", {})
-    deleted = leftovers.get("deleted", 0)
-    freed = leftovers.get("freed_bytes", 0)
-    console.print(f"[green]Cleaned {deleted} leftover files ({format_size(freed)})[/green]")
+    try:
+        result = uninstall_app(app_name, dry_run=dry_run)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        return
+    for key in ("app", "leftovers"):
+        report = result[key]
+        print_category_header(report.category)
+        show_delete_report(report)
+    offer_reclaim([result["app"], result["leftovers"]])
 
 
 def run_optimization():
@@ -492,15 +572,20 @@ def run_optimization():
 
     console.print(f"\n{label}[bold]Optimizing...[/bold]")
     result = optimize_mac(dry_run=dry_run)
-
+    reports = []
     for task, output in result.items():
         if task == "launch_agents":
             continue
-        msg = output.get("message", "Done")
-        if output.get("skipped"):
+        if isinstance(output, DeleteReport):
+            print_category_header(output.category)
+            show_delete_report(output)
+            reports.append(output)
+        elif output.get("skipped"):
             console.print(f"  [dim]SKIP[/dim] {task}")
         else:
-            console.print(f"  [green]OK[/green] {task}: {msg}")
+            print_category_header(task if task in registry.REGISTRY else "brew_cleanup")
+            console.print(f"  [green]OK[/green] {task}: {output.get('message', 'Done')}")
+    offer_reclaim(reports)
 
 
 def run_full_scan():
@@ -565,6 +650,60 @@ def run_full_scan():
     # Duplicates - skip in full scan (too slow)
     console.print("\n[dim]Duplicate scan skipped in full scan mode (use option 3 for dedicated scan)[/dim]")
 
+    console.print("\n[dim]Downloads and iOS backups moved to Space Finder (option 9)[/dim]")
+
+
+def run_space_finder():
+    """Reclaimable User Data: browse -> pick individual items -> confirm."""
+    console.print("\n[bold cyan]Scanning reclaimable user data...[/bold cyan]")
+    results = scan_space_finder()
+    if not results:
+        console.print("[green]Nothing found[/green]")
+        return
+
+    # Flat numbered list across categories
+    flat = []  # (index, category, file_dict)
+    for r in results:
+        print_category_header(r.category)
+        table = Table(box=box.ROUNDED, title=f"{r.name} ({r.human_size})")
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("Age", justify="right", style="yellow")
+        table.add_column("Size", justify="right", style="magenta")
+        table.add_column("Path", style="cyan")
+        for f in r.files:
+            flat.append((len(flat) + 1, r.category, f))
+            idx, _, _ = flat[-1]
+            table.add_row(str(idx), f"{f['age_days']:.0f}d", format_size(f["size"]),
+                          f["path"][-60:])
+        console.print(table)
+
+    raw = Prompt.ask("\nEnter item numbers to remove (comma-separated), or blank to cancel",
+                     default="")
+    if not raw.strip():
+        return
+    try:
+        chosen = {int(x) for x in raw.replace(" ", "").split(",") if x}
+    except ValueError:
+        console.print("[red]Invalid selection[/red]")
+        return
+
+    selected: dict[str, list[dict]] = {}
+    for idx, category, f in flat:
+        if idx in chosen:
+            selected.setdefault(category, []).append(f)
+    if not selected:
+        console.print("[yellow]No valid items selected[/yellow]")
+        return
+
+    from core.deleter import safe_delete
+    reports = []
+    for category, items in selected.items():
+        report = safe_delete(items, category, dry_run=False, user_selected=True)
+        print_category_header(category)
+        show_delete_report(report)
+        reports.append(report)
+    offer_reclaim(reports)
+
 
 def main():
     """Main entry point."""
@@ -597,6 +736,8 @@ def main():
             run_optimization()
         elif choice == "8":
             run_full_scan()
+        elif choice == "9":
+            run_space_finder()
         else:
             console.print("[red]Invalid choice[/red]")
 
