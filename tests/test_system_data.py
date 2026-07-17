@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import scanner.system_data
 import cleaner.system_data
-from scanner.system_data import ScanResult, scan_all
+from scanner.system_data import ScanResult, scan_all, scan_downloads, scan_space_finder
 from cleaner.system_data import clean_system_data
 
 def test_scan_result_add_file():
@@ -56,7 +56,7 @@ def test_system_data_scan_and_clean(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner.system_data, "HOME", tmp_path)
     
     # Let's run scan_all with custom age thresholds
-    results = scan_all(min_cache_age=7, min_log_age=30, min_download_age=90)
+    results = scan_all(min_cache_age=7, min_log_age=30)
     
     # Verify scanner results
     assert len(results) >= 2  # caches and logs should be present
@@ -91,3 +91,44 @@ def test_system_data_scan_and_clean(tmp_path, monkeypatch):
     cleanup_real = clean_system_data(dry_run=False)
     assert cleanup_real["User Caches"]["deleted"] == 1
     assert not old_cache.exists()  # should be deleted/trashed now
+
+
+def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
+    # scan_all must never return user-data categories.
+    # Uses isolated tmp dirs instead of real filesystem roots: an unmocked
+    # scan_all() walks /private/var/folders (system-wide temp for every
+    # process) and ~/Library/Caches, which is prohibitively slow/unbounded
+    # on a real machine. Same property under test, isolated inputs.
+    cache_dir = tmp_path / "Caches"
+    cache_dir.mkdir()
+    (cache_dir / "old.cache").write_bytes(b"x")
+    log_dir = tmp_path / "Logs"
+    log_dir.mkdir()
+    (log_dir / "app.log").write_bytes(b"y")
+    monkeypatch.setattr("scanner.system_data.CACHE_DIRS", [cache_dir])
+    monkeypatch.setattr("scanner.system_data.LOG_DIRS", [log_dir])
+    results = scan_all(min_cache_age=0, min_log_age=0)
+    categories = {r.category for r in results}
+    assert categories
+    assert categories <= {"caches", "logs", "temp"}
+
+
+def test_scan_downloads_has_no_age_filter(monkeypatch, tmp_path):
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    fresh = downloads / "yesterday.pdf"
+    fresh.write_bytes(b"x" * 10)
+    monkeypatch.setattr("scanner.system_data.HOME", tmp_path)
+    result = scan_downloads()
+    assert result.category == "downloads"
+    paths = [f["path"] for f in result.files]
+    assert str(fresh) in paths  # brand-new file IS listed; age is a signal, not a filter
+
+
+def test_scan_space_finder_categories(monkeypatch, tmp_path):
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    (downloads / "f.bin").write_bytes(b"x")
+    monkeypatch.setattr("scanner.system_data.HOME", tmp_path)
+    results = scan_space_finder()
+    assert {r.category for r in results} <= {"downloads", "ios_backups"}
