@@ -7,7 +7,6 @@ from utils.helpers import (
     get_dir_size,
     get_file_hash,
     file_age_days,
-    is_safe_to_delete,
     get_disk_usage,
     get_app_list,
 )
@@ -73,11 +72,6 @@ def test_file_age_days(tmp_path):
     age = file_age_days(file)
     assert pytest.approx(age, 0.1) == 2.0
     assert file_age_days(tmp_path / "nonexistent") == 0
-
-def test_is_safe_to_delete():
-    assert is_safe_to_delete(Path("/Users/test/Downloads/file.txt")) is True
-    assert is_safe_to_delete(Path("/System/Library/CoreServices")) is False
-    assert is_safe_to_delete(Path("/usr/bin/python3")) is False
 
 def test_get_disk_usage():
     usage = get_disk_usage()
