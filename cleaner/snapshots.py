@@ -1,4 +1,5 @@
 """Snapshot cleaner - removes local Time Machine snapshots."""
+import shutil
 from scanner.snapshots import list_snapshots
 from utils.helpers import format_size, run_command
 from utils.logger import log_cleaning_action
@@ -44,10 +45,13 @@ def clean_snapshots(dry_run: bool = False) -> dict:
             "snapshots": [s["name"] for s in snapshots],
         }
 
+    free_before = shutil.disk_usage("/").free
     successes, failures = delete_all_snapshots()
+    free_after = shutil.disk_usage("/").free
     return {
         "deleted": len(successes),
         "failed": len(failures),
         "successes": successes,
         "failures": failures,
+        "reclaimed_bytes": max(0, free_after - free_before),
     }

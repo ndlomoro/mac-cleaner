@@ -1,67 +1,34 @@
-"""App remnants cleaner - removes leftover files from uninstalled apps."""
+"""App uninstaller - removes .app bundle + leftovers via core.deleter."""
 from pathlib import Path
-from send2trash import send2trash
 
+from core.deleter import DeleteReport, safe_delete
 from scanner.app_remnants import find_leftovers
-from utils.helpers import is_safe_to_delete
-from utils.logger import log_cleaning_action
+from utils.helpers import get_dir_size
+
+APPLICATIONS_DIR = Path("/Applications")
 
 
-def clean_leftovers(app_name: str, dry_run: bool = False) -> dict:
-    """Clean leftover files for a specific app."""
-    leftovers = find_leftovers(app_name)
-    stats = {"deleted": 0, "failed": 0, "freed_bytes": 0, "errors": []}
+def _validate_app_name(app_name: str) -> None:
+    """App names are bare bundle names, never paths."""
+    if not app_name or "/" in app_name or "\x00" in app_name or app_name in (".", ".."):
+        raise ValueError(f"invalid app name: {app_name!r}")
 
-    for item in leftovers:
-        path = Path(item["path"])
-        if not is_safe_to_delete(path):
-            continue
 
-        try:
-            size = item["size"]
-            if dry_run:
-                stats["deleted"] += 1
-                stats["freed_bytes"] += size
-                log_cleaning_action("Would Trash", str(path), dry_run=True)
-                continue
-
-            if path.exists():
-                send2trash(path)
-                log_cleaning_action("Trashed", str(path), dry_run=False)
-
-            stats["deleted"] += 1
-            stats["freed_bytes"] += size
-        except Exception as e:
-            stats["failed"] += 1
-            stats["errors"].append(f"{path}: {e}")
-            log_cleaning_action("Failed to Trash", f"{path} ({e})", dry_run=dry_run)
-
-    return stats
+def clean_leftovers(app_name: str, dry_run: bool = False) -> DeleteReport:
+    _validate_app_name(app_name)
+    return safe_delete(find_leftovers(app_name), "app_leftovers", dry_run=dry_run)
 
 
 def uninstall_app(app_name: str, dry_run: bool = False) -> dict:
-    """Full uninstall: remove .app bundle + all leftovers."""
-    import glob
+    """Trash the .app bundle and its leftovers. Returns {'app': DeleteReport,
+    'leftovers': DeleteReport}."""
+    _validate_app_name(app_name)
+    bundle = APPLICATIONS_DIR / f"{app_name}.app"
+    bundle_items = []
+    if bundle.exists():
+        bundle_items.append({"path": str(bundle), "size": get_dir_size(bundle)})
 
-    stats = {"app_removed": False, "leftovers": {}}
-
-    # Find and remove the .app bundle
-    app_paths = glob.glob(f"/Applications/{app_name}.app")
-    for app_path in app_paths:
-        path = Path(app_path)
-        try:
-            if dry_run:
-                stats["app_removed"] = True
-                log_cleaning_action("Would Trash App", str(path), dry_run=True)
-                continue
-            if path.exists():
-                send2trash(path)
-                log_cleaning_action("Trashed App", str(path), dry_run=False)
-            stats["app_removed"] = True
-        except Exception as e:
-            log_cleaning_action("Failed to Trash App", f"{path} ({e})", dry_run=dry_run)
-
-    # Clean leftovers
-    stats["leftovers"] = clean_leftovers(app_name, dry_run=dry_run)
-
-    return stats
+    return {
+        "app": safe_delete(bundle_items, "app_bundle", dry_run=dry_run),
+        "leftovers": clean_leftovers(app_name, dry_run=dry_run),
+    }

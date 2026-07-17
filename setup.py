@@ -34,9 +34,11 @@ OPTIONS = {
         "rich.box",
         "rich.markup",
         "pygments",
-        "send2trash",
+        "Foundation",
+        "AppKit",
     ],
     "packages": [
+        "core",
         "scanner",
         "cleaner",
         "utils",

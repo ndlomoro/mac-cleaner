@@ -130,9 +130,9 @@ def scan_temp_files() -> ScanResult:
     return result
 
 
-def scan_download_old(min_age_days: int = 90) -> ScanResult:
-    """Scan Downloads folder for old files."""
-    result = ScanResult("downloads", "Old Downloads")
+def scan_downloads() -> ScanResult:
+    """Scan Downloads folder. User data: everything is listed; age is a signal only."""
+    result = ScanResult("downloads", "Downloads")
     downloads = HOME / "Downloads"
     if not downloads.exists():
         return result
@@ -142,12 +142,8 @@ def scan_download_old(min_age_days: int = 90) -> ScanResult:
                 continue
             try:
                 age = file_age_days(item)
-                if age >= min_age_days:
-                    if item.is_dir():
-                        size = get_dir_size(item)
-                    else:
-                        size = item.stat().st_size
-                    result.add_file(str(item), size, age)
+                size = get_dir_size(item) if item.is_dir() else item.stat().st_size
+                result.add_file(str(item), size, age)
             except (OSError, PermissionError):
                 pass
     except (OSError, PermissionError):
@@ -171,14 +167,17 @@ def scan_ios_backups() -> ScanResult:
     return result
 
 
-def scan_all(min_cache_age: int = 7, min_log_age: int = 30,
-             min_download_age: int = 90) -> list[ScanResult]:
-    """Run all system data scans."""
+def scan_all(min_cache_age: int = 7, min_log_age: int = 30) -> list[ScanResult]:
+    """Run all Junk scans. Never returns user-data categories (see /CONTEXT.md)."""
     results = [
         scan_caches(min_cache_age),
         scan_logs(min_log_age),
         scan_temp_files(),
-        scan_download_old(min_download_age),
-        scan_ios_backups(),
     ]
+    return [r for r in results if r.file_count > 0]
+
+
+def scan_space_finder() -> list[ScanResult]:
+    """Reclaimable User Data: browse-and-pick only, never bulk-cleaned."""
+    results = [scan_downloads(), scan_ios_backups()]
     return [r for r in results if r.file_count > 0]

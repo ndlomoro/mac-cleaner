@@ -72,22 +72,6 @@ def file_age_days(filepath: Path) -> int:
         return 0
 
 
-def is_safe_to_delete(filepath: Path) -> bool:
-    """Basic safety check - don't delete if file is too recent or in protected paths."""
-    protected = {
-        "/System", "/sbin", "/usr/bin", "/usr/lib",
-        "/usr/sbin", "/bin", "/private/var/db",
-    }
-    try:
-        resolved = str(filepath.resolve())
-        for p in protected:
-            if resolved.startswith(p):
-                return False
-    except (OSError, RuntimeError):
-        return False
-    return True
-
-
 def get_disk_usage() -> dict:
     """Get disk usage statistics."""
     import shutil

@@ -17,7 +17,7 @@ def test_find_large_files(tmp_path, monkeypatch):
 
     # Run scanner looking for >1MB
     results = find_large_files(min_size_mb=1.0)
-    
+
     assert len(results) == 1
     assert results[0].path == str(large_file)
     assert results[0].size == 2 * 1024 * 1024
@@ -32,6 +32,46 @@ def test_find_large_files_skips_extensions(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner.large_files, "SCAN_DIRS", [tmp_path])
 
     results = find_large_files(min_size_mb=1.0)
-    
+
     # Should be empty because .txt is skipped
     assert len(results) == 0
+
+
+import core.deleter as deleter_mod
+from core.deleter import DeleteReport
+from cleaner.large_files import clean_large_files
+
+
+def test_clean_large_files_via_safe_delete(tmp_path, monkeypatch):
+    trash_dir = tmp_path / ".Trash"
+    trash_dir.mkdir()
+
+    def _fake(path):
+        dest = trash_dir / path.name
+        path.rename(dest)
+        return dest
+
+    monkeypatch.setattr(deleter_mod, "trash_item", _fake)
+    monkeypatch.setattr(deleter_mod, "running_apps", lambda: {})
+
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 100)
+
+    report_dry = clean_large_files([str(big)], dry_run=True)
+    assert isinstance(report_dry, DeleteReport)
+    assert big.exists()
+    assert report_dry.trashed_bytes == 100
+
+    report = clean_large_files([str(big)], dry_run=False)
+    assert not big.exists()
+    assert (trash_dir / "big.bin").exists()
+    assert report.category == "large_files"
+
+
+def test_clean_large_files_protected_paths_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(deleter_mod, "running_apps", lambda: {})
+    from pathlib import Path as P
+    doc = P.home() / "Documents" / "important.pdf"
+    report = clean_large_files([str(doc)], dry_run=True)
+    assert len(report.skipped) == 1
+    assert report.skipped[0].reason
