@@ -67,3 +67,19 @@ def test_clean_snapshots_reports_reclaimed_bytes(monkeypatch):
                         lambda _: FakeUsage(next(frees)))
     result = clean_snapshots(dry_run=False)
     assert result["reclaimed_bytes"] == 500
+
+def test_clean_snapshots_clamps_negative_delta(monkeypatch):
+    monkeypatch.setattr("cleaner.snapshots.list_snapshots",
+                        lambda: [{"name": "com.apple.TimeMachine.2026-07-01-120000.local"}])
+    monkeypatch.setattr("cleaner.snapshots.delete_all_snapshots",
+                        lambda: (["Deleted snapshot: x"], []))
+    frees = iter([100_500, 100_000])  # disk got FULLER during deletion
+
+    class FakeUsage:
+        def __init__(self, free):
+            self.free = free
+
+    monkeypatch.setattr("cleaner.snapshots.shutil.disk_usage",
+                        lambda _: FakeUsage(next(frees)))
+    result = clean_snapshots(dry_run=False)
+    assert result["reclaimed_bytes"] == 0
