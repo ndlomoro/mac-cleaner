@@ -5,6 +5,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header
 
 from cleaner.privacy import clean_privacy, clear_recently_used
+from ui.screens._util import run_offthread
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
 from ui.widgets.report_view import ReportView
@@ -49,8 +50,11 @@ class PrivacyScreen(Screen):
             self.query_one(ReportView).show(reports)
             self._cleaning = False
 
-        self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
-                        thread=True)
+        def _error(e: Exception) -> None:
+            self._cleaning = False
+            self.notify(f"Failed: {e}", severity="error")
+
+        run_offthread(self, _work, _done, _error)
 
     def action_clear_recents(self) -> None:
         def _resolved(confirmed: bool | None) -> None:

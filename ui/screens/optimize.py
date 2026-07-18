@@ -6,6 +6,7 @@ from textual.widgets import Footer, Header, Static
 
 from cleaner.optimization import optimize_mac
 from core.deleter import DeleteReport
+from ui.screens._util import run_offthread
 from ui.widgets.category_header import header_markup
 from ui.widgets.report_view import render_report
 
@@ -56,5 +57,8 @@ class OptimizeScreen(Screen):
             self.query_one("#optimize-log", Static).update("\n".join(lines))
             self._optimizing = False
 
-        self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
-                        thread=True)
+        def _error(e: Exception) -> None:
+            self._optimizing = False
+            self.notify(f"Failed: {e}", severity="error")
+
+        run_offthread(self, _work, _done, _error)

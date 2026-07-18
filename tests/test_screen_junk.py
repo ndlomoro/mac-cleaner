@@ -51,6 +51,21 @@ async def test_junk_dry_run_touches_nothing(tmp_path, monkeypatch, fake_trash):
         assert "Would move to Trash" in report_text
 
 
+async def test_worker_error_resets_busy_and_notifies(tmp_path, monkeypatch, fake_trash):
+    f, sr = _fixture_scan(tmp_path)
+    monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])
+    def _boom(res, dry_run=False):
+        raise RuntimeError("cleaner exploded")
+    monkeypatch.setattr("ui.screens.junk.clean_files", _boom)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.pause()
+        assert host.screen._cleaning is False   # flag reset, screen usable
+
+
 async def test_double_press_does_not_double_clean(tmp_path, monkeypatch, fake_trash):
     f, sr = _fixture_scan(tmp_path)
     monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])

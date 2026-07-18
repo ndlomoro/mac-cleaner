@@ -7,6 +7,7 @@ from textual.widgets import Footer, Header, Static
 from cleaner.system_data import clean_files
 from core.deleter import DeleteReport, ReclaimReport, reclaim
 from scanner.system_data import scan_all
+from ui.screens._util import run_offthread
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
 from ui.widgets.report_view import ReportView
@@ -68,8 +69,11 @@ class JunkScreen(Screen):
                 self._offer_reclaim(reports)
             self._cleaning = False
 
-        self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
-                        thread=True)
+        def _error(e: Exception) -> None:
+            self._cleaning = False
+            self.notify(f"Failed: {e}", severity="error")
+
+        run_offthread(self, _work, _done, _error)
 
     def _offer_reclaim(self, reports: list[DeleteReport]) -> None:
         total = sum(r.trashed_bytes for r in reports)
@@ -83,8 +87,10 @@ class JunkScreen(Screen):
                     self.notify(f"Reclaimed ~{format_size(result.freed_bytes)} "
                                 f"({result.deleted} items)")
 
-                self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
-                                thread=True)
+                def _error(e: Exception) -> None:
+                    self.notify(f"Failed: {e}", severity="error")
+
+                run_offthread(self, _work, _done, _error)
             else:
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
