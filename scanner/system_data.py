@@ -162,19 +162,14 @@ def scan_downloads() -> ScanResult:
 
 
 def scan_ios_backups() -> ScanResult:
-    """Scan for iOS device backups."""
-    result = ScanResult("ios_backups", "iOS Backups")
-    backups_dir = HOME / "Library" / "Application Support" / "MobileSync" / "Backup"
-    if not backups_dir.exists():
-        return result
-    try:
-        for item in backups_dir.iterdir():
-            if item.is_dir():
-                size = get_dir_size(item)
-                result.add_file(str(item), size, file_age_days(item))
-    except (OSError, PermissionError):
-        pass
-    return result
+    """Scan for iOS device backups (delegates to scanner.ios_backups).
+
+    Thin wrapper with a lazy (in-body) import: scanner.ios_backups imports
+    ScanResult from this module, so importing it at module level here would
+    create a circular import.
+    """
+    from scanner.ios_backups import scan_ios_backups as _scan_ios_backups
+    return _scan_ios_backups()
 
 
 def scan_all(min_cache_age: int = 7, min_log_age: int = 30) -> list[ScanResult]:
