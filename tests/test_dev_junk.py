@@ -69,3 +69,28 @@ def test_depth_cap(tmp_path, monkeypatch):
     (deep / "node_modules").mkdir(parents=True)
     (deep / "package.json").write_text("{}")
     assert find_project_artifacts() == []
+
+
+def test_colocated_venv_does_not_contaminate_staleness(tmp_path, monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    proj = _make_node_project(tmp_path, "mixed", src_days=200, nm_days=1)
+    (proj / ".venv").mkdir()
+    (proj / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin")  # fresh, 0d
+    results = find_project_artifacts()
+    by_kind = {r["kind"]: r for r in results}
+    assert by_kind["node_modules"]["age_days"] >= 199  # venv freshness must not leak
+
+
+def test_staleness_walk_never_enters_artifacts(tmp_path, monkeypatch):
+    import os as os_mod
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    _make_node_project(tmp_path, "app", 10, 10)
+    visited = []
+    real_walk = os_mod.walk
+    def recording_walk(top, **kw):
+        for t in real_walk(top, **kw):
+            visited.append(t[0])
+            yield t
+    monkeypatch.setattr("scanner.dev_junk.os.walk", recording_walk, raising=False)
+    find_project_artifacts()
+    assert not any("node_modules" in v for v in visited)

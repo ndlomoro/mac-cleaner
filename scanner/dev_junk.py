@@ -3,6 +3,7 @@
 Staleness (see /CONTEXT.md 'Stale') is measured on the project's sources,
 never on the artifact itself.
 """
+import os
 from pathlib import Path
 
 from utils.helpers import HOME, file_age_days, get_dir_size
@@ -21,6 +22,7 @@ _ARTIFACT_MARKERS = {
     "rust_target": ("target", "Cargo.toml"),
 }
 _SKIP_DIRS = {"node_modules", "target", ".git", "Library", ".Trash"}
+_PRUNE_DIRS = _SKIP_DIRS | {"venv", ".venv"}
 
 # standalone cache roots reported as single entries
 _CACHE_ROOTS = [
@@ -29,22 +31,29 @@ _CACHE_ROOTS = [
 ]
 
 
-def _project_source_age(project: Path, exclude: Path) -> int:
-    """Days since the project's newest source-file mtime, excluding the artifact."""
-    newest = None
+def _looks_like_venv(dirpath: str, name: str) -> bool:
     try:
-        for item in project.rglob("*"):
-            if exclude in item.parents or item == exclude:
+        return (Path(dirpath) / name / "pyvenv.cfg").exists()
+    except (OSError, PermissionError):
+        return False
+
+
+def _project_source_age(project: Path) -> int:
+    """Days since the project's newest source mtime. Prunes all artifact dirs
+    (node_modules/target/venvs/.git) topdown - never enters them."""
+    newest = None
+    for dirpath, dirnames, filenames in os.walk(project, topdown=True, onerror=lambda e: None):
+        dirnames[:] = [d for d in dirnames
+                       if d not in _PRUNE_DIRS
+                       and not d.startswith(".")
+                       and not _looks_like_venv(dirpath, d)]
+        for fname in filenames:
+            try:
+                age = file_age_days(Path(dirpath) / fname)
+            except (OSError, PermissionError):
                 continue
-            if any(part in _SKIP_DIRS for part in item.relative_to(project).parts):
-                continue
-            if not item.is_file():
-                continue
-            age = file_age_days(item)
             if newest is None or age < newest:
                 newest = age
-    except (OSError, PermissionError):
-        pass
     return int(newest) if newest is not None else int(file_age_days(project))
 
 
@@ -80,7 +89,7 @@ def find_project_artifacts() -> list[dict]:
                 results.append({
                     "path": str(artifact),
                     "size": get_dir_size(artifact),
-                    "age_days": _project_source_age(directory, artifact),
+                    "age_days": _project_source_age(directory),
                     "kind": kind,
                     "project": directory.name,
                 })
@@ -93,7 +102,7 @@ def find_project_artifacts() -> list[dict]:
             results.append({
                 "path": str(venv),
                 "size": get_dir_size(venv),
-                "age_days": _project_source_age(directory, venv),
+                "age_days": _project_source_age(directory),
                 "kind": "venv",
                 "project": directory.name,
             })
