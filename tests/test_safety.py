@@ -112,6 +112,22 @@ def test_photoslibrary_and_trash_never_yield(tmp_path):
     assert is_protected(HOME / ".Trash" / "x", running={}, allow_user_content=True)[0]
 
 
+def test_photoslibrary_inside_soft_dir_never_yields():
+    lib = HOME / "Pictures" / "Family.photoslibrary" / "database"
+    protected, reason = is_protected(lib, running={}, allow_user_content=True)
+    assert protected
+    assert "Photos" in reason
+
+
+def test_in_use_still_applies_to_user_selected(tmp_path):
+    p = HOME / "Library" / "Caches" / "com.example.app" / "big.bin"
+    protected, reason = is_protected(
+        p, running={"com.example.app": "Example"}, allow_user_content=True
+    )
+    assert protected
+    assert reason == "Example is running"
+
+
 def test_symlink_escape_caught(tmp_path):
     # a symlink inside a "cache" dir pointing into ~/Documents must be protected
     target = HOME / "Documents"
