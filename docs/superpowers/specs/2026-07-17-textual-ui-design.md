@@ -46,6 +46,7 @@ ui/
 - **Duplicates:** new registry category `duplicates` (RISKY, user_data=True). Rows grouped by content hash; the UI enforces the **Keep-One Invariant** — at least one copy per group can never be selected.
 - **Privacy/Optimize/Snapshots/Uninstall:** same widgets recombined; external-tool categories carry the passive "not recoverable via Trash" label; recents and snapshots mount TypedGateModal.
 - **Gate rules:** ConfirmModal for trashing user_data selections; TypedGateModal for anything `irreversible` plus the reclaim/empty step. Dry runs never gate.
+- **Dashboard:** `s` runs a Quick Scan (junk + downloads/iOS sizes only); Optimize lists launch agents read-only.
 
 ## Protection semantics amendment (approved during phase-2 design)
 

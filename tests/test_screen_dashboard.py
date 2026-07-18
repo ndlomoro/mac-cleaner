@@ -25,3 +25,23 @@ async def test_dashboard_shows_disk_and_navigates(monkeypatch, tmp_path):
         await pilot.press("2")
         await pilot.pause()
         assert isinstance(app.screen, SpaceFinderScreen)
+
+
+async def test_quick_scan_summarizes(monkeypatch, tmp_path):
+    from scanner.system_data import ScanResult
+    monkeypatch.setattr("ui.screens.dashboard.get_disk_usage",
+                        lambda: {"total": 1000, "used": 400, "free": 600, "percent": 40})
+    sr = ScanResult("caches", "User Caches")
+    f = tmp_path / "c.bin"; f.write_bytes(b"x" * 50)
+    sr.add_file(str(f), 50, 10)
+    monkeypatch.setattr("ui.screens.dashboard.scan_all", lambda: [sr])
+    monkeypatch.setattr("ui.screens.dashboard.scan_space_finder", lambda: [])
+    from ui.app import CleanerApp
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        text = str(app.screen.query_one("#summary").content)
+        assert "User Caches" in text and "1 items" in text

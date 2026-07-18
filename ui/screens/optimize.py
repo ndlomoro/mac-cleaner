@@ -6,8 +6,9 @@ from textual.widgets import Footer, Header, Static
 
 from cleaner.optimization import optimize_mac
 from core.deleter import DeleteReport
+from scanner.optimization import check_launch_agents
 from ui.screens._util import run_offthread
-from ui.widgets.category_header import header_markup
+from ui.widgets.category_header import CategoryHeader, header_markup
 from ui.widgets.report_view import render_report
 
 
@@ -20,11 +21,31 @@ class OptimizeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield VerticalScroll(Static(id="optimize-log"))
+        with VerticalScroll():
+            yield Static(id="optimize-log")
+            yield CategoryHeader("launch_agents")
+            yield Static(id="agents")
         yield Footer()
 
     def on_mount(self) -> None:
         self._optimizing = False
+        self.query_one("#agents", Static).update("Scanning…")
+
+        def _work():
+            return check_launch_agents()
+
+        def _done(agents: list[dict]) -> None:
+            if not agents:
+                self.query_one("#agents", Static).update(
+                    "No third-party launch agents found.")
+                return
+            lines = [f"{a['name']} ({a['path']})" for a in agents]
+            self.query_one("#agents", Static).update("\n".join(lines))
+
+        def _error(e: Exception) -> None:
+            self.notify(f"Failed to list launch agents: {e}", severity="error")
+
+        run_offthread(self, _work, _done, _error)
 
     def action_dry_run(self) -> None:
         self._run(dry_run=True)

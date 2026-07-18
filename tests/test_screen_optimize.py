@@ -27,3 +27,25 @@ async def test_optimize_renders_reports_and_external_labels(monkeypatch, fake_tr
         assert "Would move to Trash" in text          # DeleteReport rendering
         assert "not recoverable via Trash" in text    # external-tool label
         assert "SKIP" in text
+
+
+async def test_optimize_lists_launch_agents(monkeypatch):
+    agents = [{"name": "com.example.helper", "path": "/Library/LaunchAgents/com.example.helper.plist",
+               "location": "LaunchAgents", "user_owned": True}]
+    monkeypatch.setattr("ui.screens.optimize.check_launch_agents", lambda: agents)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        text = str(host.screen.query_one("#agents").content)
+        assert "com.example.helper" in text
+
+
+async def test_optimize_no_launch_agents(monkeypatch):
+    monkeypatch.setattr("ui.screens.optimize.check_launch_agents", lambda: [])
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        text = str(host.screen.query_one("#agents").content)
+        assert "No third-party launch agents found." in text
