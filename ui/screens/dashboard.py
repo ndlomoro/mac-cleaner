@@ -4,6 +4,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
+from scanner.dev_junk import find_project_artifacts
 from scanner.system_data import scan_all, scan_space_finder
 from ui.screens._util import run_offthread, skip_resume_rescan
 from utils.helpers import format_size, get_disk_usage
@@ -15,6 +16,7 @@ AREAS = [
     ("4", "Optimize", "optimize", "SAFE"),
     ("5", "Snapshots", "snapshots", "RISKY"),
     ("6", "Uninstall Apps", "uninstall", "CAUTION"),
+    ("7", "Dev Junk", "dev_junk", "CAUTION/RISKY"),
 ]
 
 
@@ -72,16 +74,22 @@ class DashboardScreen(Screen):
         self.query_one("#summary", Static).update("Scanning…")
 
         def _work():
-            return scan_all() + scan_space_finder()
+            return scan_all() + scan_space_finder(), find_project_artifacts()
 
-        def _done(results) -> None:
+        def _done(result) -> None:
             self._scanning = False
+            results, artifacts = result
             lines = [
                 f"{r.name}: {r.file_count} items (~{r.human_size})"
                 for r in results if r.file_count > 0
             ]
+            if artifacts:
+                total = sum(a["size"] for a in artifacts)
+                n_projects = len({a["project"] for a in artifacts})
+                lines.append(
+                    f"Dev junk: ~{format_size(total)} across {n_projects} projects")
             if lines:
-                lines.append("[dim]Open an area (1-6) to review and clean.[/dim]")
+                lines.append("[dim]Open an area (1-7) to review and clean.[/dim]")
                 text = "\n".join(lines)
             else:
                 text = "Nothing found - looking clean."
