@@ -7,7 +7,7 @@ from textual.widgets import Footer, Header, Static
 from cleaner.system_data import clean_files
 from core.deleter import DeleteReport, ReclaimReport, reclaim
 from scanner.system_data import scan_all
-from ui.screens._util import push_modal, run_offthread, skip_resume_rescan
+from ui.screens._util import push_modal, run_gated, run_offthread, skip_resume_rescan
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
 from ui.widgets.report_view import ReportView, render_paths
@@ -83,6 +83,13 @@ class JunkScreen(Screen):
         self._run_clean(dry_run=False)
 
     def _run_clean(self, dry_run: bool) -> None:
+        # _cleaning is set here, at the entry point, and is NOT cleared by a
+        # plain run_offthread completion: when a real clean trashes anything,
+        # _done chains into the reclaim gate + reclaim worker, and the flag
+        # must stay True across that whole chain (see _offer_reclaim) so a
+        # resume mid-reclaim doesn't rescan and clobber state. It's cleared
+        # right here in _done only on the branch that does NOT chain further
+        # (dry-run, or nothing trashed), and in _error (which never chains).
         if self._cleaning:
             self.notify("Already cleaning…")
             return
@@ -100,8 +107,9 @@ class JunkScreen(Screen):
                 self.query_one("#preview", Static).update("")
                 self._preview_shown = False
             if not dry_run and any(r.trashed for r in reports):
-                self._offer_reclaim(reports)
-            self._cleaning = False
+                self._offer_reclaim(reports)  # _cleaning stays True - see _offer_reclaim
+            else:
+                self._cleaning = False
 
         def _error(e: Exception) -> None:
             self._cleaning = False
@@ -110,6 +118,11 @@ class JunkScreen(Screen):
         run_offthread(self, _work, _done, _error)
 
     def _offer_reclaim(self, reports: list[DeleteReport]) -> None:
+        # Entered with self._cleaning already True (see _run_clean). This is
+        # the last leg of the clean/reclaim chain: the declined branch clears
+        # it manually (no further async step), and the confirmed branch's
+        # reclaim worker uses run_gated so the flag clears exactly when the
+        # reclaim worker's own done/error terminates - not before.
         total = sum(r.trashed_bytes for r in reports)
 
         def _resolved(confirmed: bool | None) -> None:
@@ -124,8 +137,9 @@ class JunkScreen(Screen):
                 def _error(e: Exception) -> None:
                     self.notify(f"Failed: {e}", severity="error")
 
-                run_offthread(self, _work, _done, _error)
+                run_gated(self, "_cleaning", _work, _done, _error)
             else:
+                self._cleaning = False
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
         push_modal(

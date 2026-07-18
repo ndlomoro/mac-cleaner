@@ -15,7 +15,7 @@ from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
 from scanner.duplicates import find_duplicates
 from scanner.large_files import find_large_files
 from scanner.system_data import scan_space_finder
-from ui.screens._util import push_modal, run_offthread, skip_resume_rescan
+from ui.screens._util import push_modal, run_gated, run_offthread, skip_resume_rescan
 from ui.widgets.gates import ConfirmModal, TypedGateModal
 from ui.widgets.report_view import ReportView
 from utils.helpers import format_size
@@ -41,6 +41,7 @@ class SpaceFinderScreen(Screen):
 
     def on_mount(self) -> None:
         self._scanning = False
+        self._trashing = False
         self._rescan()
 
     def _rescan(self) -> None:
@@ -55,7 +56,7 @@ class SpaceFinderScreen(Screen):
         self.run_worker(self._scan, thread=True)
 
     def on_screen_resume(self) -> None:
-        if skip_resume_rescan(self) or self._scanning:
+        if skip_resume_rescan(self) or self._scanning or self._trashing:
             return
         self._rescan()
 
@@ -141,6 +142,18 @@ class SpaceFinderScreen(Screen):
     # ---------- trashing ----------
 
     def action_trash_selected(self) -> None:
+        # _trashing spans ConfirmModal -> trash worker -> (if anything was
+        # trashed) reclaim gate -> reclaim worker/decline. It's set here,
+        # before the ConfirmModal is even pushed, and only cleared in a
+        # branch that truly ends the flow: the "nothing selected"/refused
+        # early-returns below never set it in the first place; the
+        # ConfirmModal-declined branch and the trash worker's error branch
+        # clear it directly; the trash-done branch clears it only when no
+        # reclaim is offered, otherwise handing the flag off to
+        # _offer_reclaim exactly like Junk's chain.
+        if self._trashing:
+            self.notify("Already trashing…")
+            return
         picked: dict[str, list[dict]] = {}
         for key in TABS:
             sel = self.query_one(f"#list-{key}", SelectionList)
@@ -169,9 +182,11 @@ class SpaceFinderScreen(Screen):
 
         count = sum(len(v) for v in picked.values())
         total = sum(f["size"] for v in picked.values() for f in v)
+        self._trashing = True
 
         def _resolved(confirmed: bool | None) -> None:
             if not confirmed:
+                self._trashing = False
                 self.notify("Cancelled - nothing was touched.")
                 return
 
@@ -185,9 +200,12 @@ class SpaceFinderScreen(Screen):
                 self.query_one(ReportView).show(reports)
                 self._refresh_lists(picked, reports)
                 if any(r.trashed for r in reports):
-                    self._offer_reclaim(reports)
+                    self._offer_reclaim(reports)  # _trashing stays True - see _offer_reclaim
+                else:
+                    self._trashing = False
 
             def _error(exc: Exception) -> None:
+                self._trashing = False
                 self.notify(f"Trash failed: {exc}", severity="error")
 
             run_offthread(self, _work, _done, _error)
@@ -218,6 +236,12 @@ class SpaceFinderScreen(Screen):
     # ---------- reclaim (parity with Junk screen) ----------
 
     def _offer_reclaim(self, reports: list[DeleteReport]) -> None:
+        # Entered with self._trashing already True (see action_trash_selected).
+        # This is the last leg of the trash/reclaim chain: the declined
+        # branch clears it manually (no further async step), and the
+        # confirmed branch's reclaim worker uses run_gated so the flag
+        # clears exactly when the reclaim worker's own done/error
+        # terminates - not before.
         total = sum(r.trashed_bytes for r in reports)
 
         def _resolved(confirmed: bool | None) -> None:
@@ -232,8 +256,9 @@ class SpaceFinderScreen(Screen):
                 def _error(exc: Exception) -> None:
                     self.notify(f"Reclaim failed: {exc}", severity="error")
 
-                run_offthread(self, _work, _done, _error)
+                run_gated(self, "_trashing", _work, _done, _error)
             else:
+                self._trashing = False
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
         push_modal(

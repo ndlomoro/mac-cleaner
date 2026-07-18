@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from textual.app import App
@@ -141,3 +142,51 @@ async def test_revisiting_junk_screen_rescans(monkeypatch):
         await pilot.press("1")       # dashboard -> Junk again: resume rescan
         await pilot.pause()
     assert calls == [1, 1]
+
+
+async def test_resume_during_reclaim_worker_does_not_rescan(tmp_path, monkeypatch, fake_trash):
+    """Critical busy-coverage gap: _cleaning was cleared before the reclaim
+    gate was even answered, so navigating away and back while the reclaim
+    worker was still running fired a resume-triggered rescan. _cleaning must
+    stay True through the reclaim gate + reclaim worker, clearing only in
+    reclaim's terminal callback."""
+    f, sr = _fixture_scan(tmp_path)
+    scan_calls = []
+
+    def counting_scan_all():
+        scan_calls.append(1)
+        return [sr]
+
+    monkeypatch.setattr("ui.screens.junk.scan_all", counting_scan_all)
+
+    real_reclaim = __import__("ui.screens.junk", fromlist=["reclaim"]).reclaim
+
+    def slow_reclaim(reports):
+        time.sleep(0.3)
+        return real_reclaim(reports)
+
+    monkeypatch.setattr("ui.screens.junk.reclaim", slow_reclaim)
+
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.press("1")
+        await pilot.pause()                   # initial scan -> call #1
+        await pilot.press("c")                # real clean -> trashes -> reclaim gate
+        await pilot.pause()
+        await pilot.click("#gate-input")
+        await pilot.press(*"yes", "enter")    # confirm reclaim -> slow worker starts
+        await pilot.press("escape")           # navigate away mid-reclaim
+        await pilot.pause()
+        await pilot.press("1")                # re-enter mid-reclaim - must NOT rescan
+        await pilot.pause()
+        assert scan_calls == [1]              # busy flag held through reclaim
+
+        await asyncio.sleep(0.4)              # let reclaim land, clearing _cleaning
+        await pilot.pause()
+
+        # a genuine resume AFTER the busy flag clears must rescan normally
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("1")
+        await pilot.pause()
+    assert scan_calls == [1, 1]

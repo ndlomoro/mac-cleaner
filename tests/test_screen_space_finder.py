@@ -1,8 +1,13 @@
+import asyncio
+import time
+
 from textual.app import App
 from textual.widgets import SelectionList, Static
 
 from scanner.large_files import LargeFile
 from scanner.system_data import ScanResult
+from ui.app import CleanerApp
+from ui.screens import space_finder as sf_mod
 from ui.screens.space_finder import SpaceFinderScreen
 from ui.widgets.gates import ConfirmModal
 from utils.helpers import format_size
@@ -200,3 +205,56 @@ async def test_cross_tab_keep_one_enforced_via_large_files(
         assert not isinstance(host.screen_stack[-1], ConfirmModal)
         assert a.exists()
         assert b.exists()
+
+
+async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, fake_trash):
+    """Critical busy-coverage gap: the trash/reclaim flow never touched
+    _scanning, so navigating away and back while safe_delete was still
+    in-flight fired a resume-triggered _rescan() that raced _refresh_lists()
+    and clobbered the just-trashed state. _trashing must span
+    ConfirmModal -> trash worker -> (no reclaim offered here, single file)."""
+    f = _patch_scanners(monkeypatch, tmp_path)
+
+    rescan_calls = []
+    real_rescan = sf_mod.SpaceFinderScreen._rescan
+
+    def counting_rescan(self):
+        rescan_calls.append(1)
+        real_rescan(self)
+
+    monkeypatch.setattr(sf_mod.SpaceFinderScreen, "_rescan", counting_rescan)
+
+    real_safe_delete = sf_mod.safe_delete
+
+    def slow_safe_delete(*args, **kwargs):
+        time.sleep(0.3)
+        return real_safe_delete(*args, **kwargs)
+
+    monkeypatch.setattr("ui.screens.space_finder.safe_delete", slow_safe_delete)
+
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        await pilot.pause()                  # initial mount -> _rescan call #1
+        dl_list = app.screen.query_one("#list-downloads", SelectionList)
+        dl_list.focus()
+        await pilot.press("space")
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.click("#confirm")        # starts the 0.3s-slow trash worker
+        await pilot.press("escape")          # navigate away mid-flight
+        await pilot.pause()
+        await pilot.press("2")               # re-enter mid-flight - must NOT rescan
+        await pilot.pause()
+        await asyncio.sleep(0.4)             # let the slow worker land
+        await pilot.pause()
+        await pilot.pause()
+        # something was trashed, so the reclaim gate is now on top of the
+        # stack - the SpaceFinderScreen itself lives one level down
+        sf_screen = app.screen_stack[-2]
+        assert sf_screen.query_one("#list-downloads", SelectionList).option_count == 0
+        await pilot.press("escape")          # decline the reclaim gate
+
+    assert rescan_calls == [1]                # only the initial on_mount rescan
+    assert not f.exists()
+    assert (fake_trash / "old.dmg").exists()
