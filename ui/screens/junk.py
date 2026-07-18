@@ -10,7 +10,7 @@ from scanner.system_data import scan_all
 from ui.screens._util import run_offthread
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
-from ui.widgets.report_view import ReportView
+from ui.widgets.report_view import ReportView, render_paths
 from utils.helpers import format_size
 
 
@@ -19,19 +19,33 @@ class JunkScreen(Screen):
         ("escape", "app.pop_screen", "Back"),
         ("d", "dry_run", "Dry Run"),
         ("c", "clean", "Clean"),
+        ("v", "toggle_preview", "View Files"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id="junk-body")
+        yield Static(id="preview")
         yield ReportView(id="report")
         yield Footer()
 
     def on_mount(self) -> None:
         self.results = {}
         self._cleaning = False
+        self._preview_shown = False
         self.sub_title = "System Data (Junk) - scanning…"
         self.run_worker(self._scan, thread=True)
+
+    def action_toggle_preview(self) -> None:
+        preview = self.query_one("#preview", Static)
+        if self._preview_shown:
+            preview.update("")
+            self._preview_shown = False
+            return
+        parts = [render_paths(res.name, [f["path"] for f in res.files])
+                 for res in self.results.values()]
+        preview.update("\n\n".join(parts))
+        self._preview_shown = True
 
     def _scan(self) -> None:
         for res in scan_all():

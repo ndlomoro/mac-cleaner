@@ -1,13 +1,13 @@
-"""Uninstall screen - app picker; bundle + leftovers reports."""
+"""Uninstall screen - app picker; dry-run preview, then real uninstall."""
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header
+from textual.widgets import DataTable, Footer, Header, Static
 
 from cleaner.app_remnants import uninstall_app
 from scanner.app_remnants import get_installed_apps
 from ui.screens._util import run_offthread
 from ui.widgets.gates import ConfirmModal
-from ui.widgets.report_view import ReportView
+from ui.widgets.report_view import ReportView, render_paths
 from utils.helpers import format_size
 
 
@@ -17,11 +17,13 @@ class UninstallScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield DataTable(id="apps", cursor_type="row")
+        yield Static(id="preview")
         yield ReportView(id="report")
         yield Footer()
 
     def on_mount(self) -> None:
         self.apps = []
+        self._busy = False
         table = self.query_one(DataTable)
         table.add_columns("App", "Size")
         run_offthread(self, get_installed_apps, self._fill, self._load_error)
@@ -36,27 +38,52 @@ class UninstallScreen(Screen):
             table.add_row(app_info["name"], format_size(app_info["size"]))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if self._busy:
+            return
         app_info = self.apps[event.cursor_row]
         name = app_info["name"]
+        self._busy = True
 
-        def _resolved(confirmed: bool | None) -> None:
-            if not confirmed:
-                self.notify("Cancelled - nothing was touched.")
-                return
+        def _dry_run_work():
+            return uninstall_app(name, dry_run=True)
 
-            def _work():
-                return uninstall_app(name, dry_run=False)
+        def _dry_run_done(dry_result: dict) -> None:
+            reports = [dry_result["app"], dry_result["leftovers"]]
+            self.query_one(ReportView).show(reports)
+            paths = [r.path for report in reports for r in report.trashed]
+            self.query_one("#preview", Static).update(
+                render_paths("Would move to Trash", paths))
+            count = len(paths)
+            total = sum(report.trashed_bytes for report in reports)
 
-            def _done(result: dict) -> None:
-                self.query_one(ReportView).show([result["app"], result["leftovers"]])
+            def _resolved(confirmed: bool | None) -> None:
+                if not confirmed:
+                    self._busy = False
+                    self.notify("Cancelled - nothing was touched.")
+                    return
 
-            def _error(exc: Exception) -> None:
-                self.notify(str(exc), severity="error")
+                def _real_work():
+                    return uninstall_app(name, dry_run=False)
 
-            run_offthread(self, _work, _done, _error)
+                def _real_done(result: dict) -> None:
+                    self._busy = False
+                    self.query_one(ReportView).show(
+                        [result["app"], result["leftovers"]])
 
-        self.app.push_screen(
-            ConfirmModal(f"Uninstall {name} (~{format_size(app_info['size'])}) "
-                         f"and Trash its leftovers?"),
-            _resolved,
-        )
+                def _real_error(exc: Exception) -> None:
+                    self._busy = False
+                    self.notify(str(exc), severity="error")
+
+                run_offthread(self, _real_work, _real_done, _real_error)
+
+            self.app.push_screen(
+                ConfirmModal(f"Uninstall {name} ({count} item(s), "
+                             f"~{format_size(total)}) and Trash its leftovers?"),
+                _resolved,
+            )
+
+        def _dry_run_error(exc: Exception) -> None:
+            self._busy = False
+            self.notify(str(exc), severity="error")
+
+        run_offthread(self, _dry_run_work, _dry_run_done, _dry_run_error)

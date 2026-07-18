@@ -47,6 +47,7 @@ ui/
 - **Privacy/Optimize/Snapshots/Uninstall:** same widgets recombined; external-tool categories carry the passive "not recoverable via Trash" label; recents and snapshots mount TypedGateModal.
 - **Gate rules:** ConfirmModal for trashing user_data selections; TypedGateModal for anything `irreversible` plus the reclaim/empty step. Dry runs never gate.
 - **Dashboard:** `s` runs a Quick Scan (junk + downloads/iOS sizes only); Optimize lists launch agents read-only.
+- **Previews:** `v` toggles per-file path previews on Junk/Privacy/Optimize (capped, never silently truncated); Uninstall always dry-runs and shows would-be-trashed paths before its confirm.
 
 ## Protection semantics amendment (approved during phase-2 design)
 

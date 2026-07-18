@@ -23,6 +23,37 @@ async def test_privacy_clean_shows_reports(monkeypatch, fake_trash):
         assert "Would move to Trash" in text
 
 
+async def test_privacy_preview_filters_history_and_byhost(monkeypatch):
+    monkeypatch.setattr(
+        "ui.screens.privacy.scan_browser_data",
+        lambda: [
+            {"browser": "Safari", "type": "caches", "path": "/caches/safari", "size": 1},
+            {"browser": "Safari", "type": "history", "path": "/history/safari.db", "size": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        "ui.screens.privacy.scan_tracking_data",
+        lambda: [
+            {"type": "tracking_dir", "path": "/tracking/diag", "size": 1},
+            {"type": "tracking_file",
+             "path": "/Library/Preferences/ByHost/x.plist", "size": 1},
+        ],
+    )
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("v")
+        await pilot.pause()
+        text = str(host.screen.query_one("#preview").content)
+        assert "/caches/safari" in text
+        assert "/history/safari.db" not in text
+        assert "/tracking/diag" in text
+        assert "ByHost" not in text
+        await pilot.press("v")
+        await pilot.pause()
+        assert str(host.screen.query_one("#preview").content) == ""
+
+
 async def test_recents_gate_blocks_without_yes(monkeypatch):
     calls = []
     monkeypatch.setattr("ui.screens.privacy.clear_recently_used",

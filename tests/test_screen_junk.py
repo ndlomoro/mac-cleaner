@@ -66,6 +66,23 @@ async def test_worker_error_resets_busy_and_notifies(tmp_path, monkeypatch, fake
         assert host.screen._cleaning is False   # flag reset, screen usable
 
 
+async def test_junk_preview_toggle(tmp_path, monkeypatch, fake_trash):
+    f, sr = _fixture_scan(tmp_path)
+    monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("v")
+        await pilot.pause()
+        text = str(host.screen.query_one("#preview").content)
+        # render_paths truncates long paths to their last 76 chars ("…" prefix)
+        assert str(f)[-76:] in text
+        await pilot.press("v")
+        await pilot.pause()
+        text2 = str(host.screen.query_one("#preview").content)
+        assert text2 == ""
+
+
 async def test_double_press_does_not_double_clean(tmp_path, monkeypatch, fake_trash):
     f, sr = _fixture_scan(tmp_path)
     monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])

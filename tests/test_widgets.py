@@ -1,6 +1,6 @@
 from core.deleter import DeleteReport, Outcome, PathResult
 from ui.widgets.category_header import header_markup
-from ui.widgets.report_view import render_report
+from ui.widgets.report_view import render_paths, render_report
 
 
 def test_header_markup_shows_level_and_explanation():
@@ -27,3 +27,20 @@ def test_render_report_dry_and_real_wording():
     r2.results.append(PathResult("/tmp/x", Outcome.FAILED, 1, "disk full"))
     out2 = render_report(r2)
     assert "Moved to Trash: 0" in out2 and "disk full" in out2
+
+
+def test_render_paths_under_cap_shows_everything_no_remainder():
+    paths = ["/a/one", "/a/two", "/a/three"]
+    out = render_paths("Test", paths, cap=50)
+    assert "Test" in out and "(3 items)" in out
+    for p in paths:
+        assert p in out
+    assert "more not shown" not in out
+
+
+def test_render_paths_over_cap_truncates_with_explicit_remainder():
+    paths = [f"/a/path/{i}" for i in range(60)]
+    out = render_paths("Test", paths, cap=50)
+    shown = [p for p in paths if p in out]
+    assert len(shown) == 50
+    assert "+ 10 more not shown" in out
