@@ -27,7 +27,7 @@ def test_irreversible_is_exactly_risky_non_trash():
 
 def test_user_data_categories():
     user_data = {k for k, c in REGISTRY.items() if c.user_data}
-    assert user_data == {"downloads", "ios_backups", "large_files"}
+    assert user_data == {"downloads", "ios_backups", "large_files", "duplicates"}
 
 
 def test_non_trash_junk_is_not_irreversible():
@@ -42,6 +42,7 @@ def test_all_cleaner_categories_registered():
     # (reserved for future cleaners - not yet passed to safe_delete by any cleaner)
     for key in [
         "caches", "logs", "temp", "downloads", "ios_backups", "large_files",
+        "duplicates",
         "browser_cache", "browser_history", "tracking_data", "recents",
         "app_bundle", "app_leftovers", "launch_agents",
         "xcode_derived_data", "cocoapods_cache", "pip_cache",
