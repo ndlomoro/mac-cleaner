@@ -37,7 +37,7 @@ Staleness-aware pick screen (Space Finder style) for filesystem artifacts; Docke
 
 1. **Project artifacts:** SelectionList, stalest-first (`"{~size}  {age}d idle  {kind}  {project}"`), nothing pre-selected, no select-all, selected-total footer. Pick → ConfirmModal → `safe_delete(..., user_selected=True)` off-thread → ReportView → reclaim offer. Inherits: run_offthread, busy guard, skipped-items-stay-listed refresh.
 2. **Docker** (present only when CLI exists): summary line; `D` → TypedGateModal naming exactly what the prune covers; **volumes excluded by default**, included only via a separate explicit prompt (they can hold real data). Reports Docker's own figure as genuinely Reclaimed.
-3. **Simulators** (present only when Xcode exists): list with sizes; `S` → TypedGateModal → `xcrun simctl delete unavailable` (conservative variant only).
+3. **Simulators** (present only when Xcode exists): list of unavailable simulators by name (sizing ticketed for a later polish pass along with the None-vs-[] absent-tool distinction); `S` → TypedGateModal → `xcrun simctl delete unavailable` (conservative variant only).
 
 **Quick Scan:** dashboard gains a "Dev junk: ~X across N projects" line — project discovery only; no docker/simctl subprocess calls from the dashboard.
 

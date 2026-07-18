@@ -10,13 +10,29 @@ from pathlib import Path
 
 from utils.helpers import HOME, file_age_days, get_dir_size, run_command
 
-PROJECT_ROOTS = [
-    HOME / "Documents",
-    HOME / "Develop",
-    HOME / "Developer",
-    HOME / "Projects",
-]
 MAX_DEPTH = 4
+
+# (root, max_depth) - per-root depth caps. The HOME root is last and shallow
+# (2): it's a much wider fan-out than the four curated dev roots, so it's
+# capped tighter and skips those roots (walked separately below) plus
+# non-project home dirs (Library and dot-dirs are already skipped by the
+# existing _SKIP_DIRS/dotfile rules in _walk).
+PROJECT_ROOTS: list[tuple[Path, int]] = [
+    (HOME / "Documents", MAX_DEPTH),
+    (HOME / "Develop", MAX_DEPTH),
+    (HOME / "Developer", MAX_DEPTH),
+    (HOME / "Projects", MAX_DEPTH),
+    (HOME, 2),
+]
+
+# Names skipped only during the HOME root's walk (the last entry in
+# PROJECT_ROOTS): the other configured roots (walked separately - `seen`
+# already dedups, this just avoids the wasted double-walk) plus home
+# directories that are never project containers worth walking into.
+HOME_WALK_SKIP = {
+    "Documents", "Develop", "Developer", "Projects",
+    "Desktop", "Downloads", "Pictures", "Movies", "Music", "Applications",
+}
 
 # kind -> (artifact dir name, sibling marker that confirms a project)
 _ARTIFACT_MARKERS = {
@@ -71,8 +87,9 @@ def find_project_artifacts() -> list[dict]:
     results: list[dict] = []
     seen: set[str] = set()
 
-    def _walk(directory: Path, depth: int) -> None:
-        if depth > MAX_DEPTH:
+    def _walk(directory: Path, depth: int, max_depth: int,
+              skip: frozenset[str] = frozenset()) -> None:
+        if depth > max_depth:
             return
         try:
             children = list(directory.iterdir())
@@ -113,12 +130,15 @@ def find_project_artifacts() -> list[dict]:
             return  # prune: never descend past a project hit
         for child in children:
             if child.is_dir() and not child.is_symlink() \
-                    and child.name not in _SKIP_DIRS and not child.name.startswith("."):
-                _walk(child, depth + 1)
+                    and child.name not in _SKIP_DIRS and not child.name.startswith(".") \
+                    and child.name not in skip:
+                _walk(child, depth + 1, max_depth, skip)
 
-    for root in PROJECT_ROOTS:
+    last = len(PROJECT_ROOTS) - 1
+    for i, (root, depth_cap) in enumerate(PROJECT_ROOTS):
         if root.exists():
-            _walk(root, 0)
+            root_skip = HOME_WALK_SKIP if i == last else frozenset()
+            _walk(root, 0, depth_cap, root_skip)
 
     for kind, cache_root in _CACHE_ROOTS:
         if cache_root.exists():

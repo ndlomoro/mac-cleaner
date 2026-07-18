@@ -24,7 +24,7 @@ def _make_node_project(root: Path, name: str, src_days: float, nm_days: float) -
 
 
 def test_detects_kinds_and_staleness(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     proj = _make_node_project(tmp_path, "dead-app", src_days=200, nm_days=1)
 
     rust = tmp_path / "oxidized"
@@ -52,7 +52,7 @@ def test_detects_kinds_and_staleness(tmp_path, monkeypatch):
 
 
 def test_never_descends_into_artifacts(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     proj = _make_node_project(tmp_path, "app", 10, 10)
     # a nested project INSIDE node_modules must not be reported
     inner = proj / "node_modules" / "dep"
@@ -64,16 +64,43 @@ def test_never_descends_into_artifacts(tmp_path, monkeypatch):
 
 
 def test_depth_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
-    monkeypatch.setattr("scanner.dev_junk.MAX_DEPTH", 2)
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 2)])
     deep = tmp_path / "a" / "b" / "c" / "d"
     (deep / "node_modules").mkdir(parents=True)
     (deep / "package.json").write_text("{}")
     assert find_project_artifacts() == []
 
 
+def test_home_root_finds_project_within_depth_cap(tmp_path, monkeypatch):
+    # HOME root walk uses a shallow cap (2): a project one level under the
+    # simulated home dir must still be found.
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 2)])
+    _make_node_project(tmp_path, "HOME_depth1", src_days=10, nm_days=10)
+    results = find_project_artifacts()
+    assert any(r["kind"] == "node_modules" and r["project"] == "HOME_depth1"
+               for r in results)
+
+
+def test_home_root_depth_cap_excludes_deeper_project(tmp_path, monkeypatch):
+    # Same project shape, but nested three levels deep - beyond the HOME
+    # root's depth-2 cap - must NOT be found.
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 2)])
+    _make_node_project(tmp_path / "a" / "b", "HOME_deep", src_days=10, nm_days=10)
+    results = find_project_artifacts()
+    assert results == []
+
+
+def test_home_root_skips_configured_non_project_dirs(tmp_path, monkeypatch):
+    # A project living under a HOME_WALK_SKIP name (e.g. Desktop) must not
+    # be found: the HOME root walk skips these dirs entirely.
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 2)])
+    _make_node_project(tmp_path / "Desktop", "proj", src_days=10, nm_days=10)
+    results = find_project_artifacts()
+    assert results == []
+
+
 def test_colocated_venv_does_not_contaminate_staleness(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     proj = _make_node_project(tmp_path, "mixed", src_days=200, nm_days=1)
     (proj / ".venv").mkdir()
     (proj / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin")  # fresh, 0d
@@ -84,7 +111,7 @@ def test_colocated_venv_does_not_contaminate_staleness(tmp_path, monkeypatch):
 
 def test_staleness_walk_never_enters_artifacts(tmp_path, monkeypatch):
     import os as os_mod
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     _make_node_project(tmp_path, "app", 10, 10)
     visited = []
     real_walk = os_mod.walk
@@ -98,7 +125,7 @@ def test_staleness_walk_never_enters_artifacts(tmp_path, monkeypatch):
 
 
 def test_permission_denied_dir_does_not_crash_scan(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     proj = _make_node_project(tmp_path, "app", 10, 10)
     locked = proj / "locked"
     locked.mkdir()
@@ -128,7 +155,7 @@ def test_permission_denied_dir_does_not_crash_scan(tmp_path, monkeypatch):
 
 
 def test_locked_venv_dir_does_not_crash_scan(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     # a sibling, ordinary project - its artifacts must still surface even
     # though the locked-venv project below must not crash the whole scan
     _make_node_project(tmp_path, "other-app", 10, 10)
@@ -188,7 +215,7 @@ def test_cache_roots_have_no_fake_staleness(tmp_path, monkeypatch):
 
 
 def test_stalest_first_sort_treats_none_age_as_zero_not_top(tmp_path, monkeypatch):
-    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [(tmp_path, 4)])
     _make_node_project(tmp_path, "dead-app", src_days=500, nm_days=1)
     cache = tmp_path / "gradle-caches"
     cache.mkdir()
