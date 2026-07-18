@@ -1,8 +1,9 @@
+import json
 import os
 import time
 from pathlib import Path
 
-from scanner.dev_junk import find_project_artifacts
+from scanner.dev_junk import find_docker_junk, find_project_artifacts, find_simulators
 
 
 def _mtime(p: Path, days_ago: float) -> None:
@@ -161,3 +162,64 @@ def test_locked_venv_dir_does_not_crash_scan(tmp_path, monkeypatch):
     # the locked venv may or may not be reported, but the scan must complete
     # and the sibling project's artifacts must still show up
     assert any(r["kind"] == "node_modules" and r["project"] == "other-app" for r in results)
+
+
+DOCKER_DF = "\n".join([
+    '{"Type":"Images","Size":"10GB","Reclaimable":"8GB"}',
+    '{"Type":"Local Volumes","Size":"2GB","Reclaimable":"2GB"}',
+    '{"Type":"Build Cache","Size":"500MB","Reclaimable":"500MB"}',
+])
+
+
+def test_docker_junk_parses_df(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.run_command",
+                        lambda cmd: (DOCKER_DF, "", 0))
+    monkeypatch.setattr("scanner.dev_junk._which",
+                        lambda name: "/usr/local/bin/docker")
+    result = find_docker_junk()
+    assert result["images_bytes"] == 8 * 1000**3
+    assert result["volumes_bytes"] == 2 * 1000**3
+    assert result["build_cache_bytes"] == 500 * 1000**2
+
+
+def test_docker_absent_returns_none(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk._which", lambda name: None)
+    assert find_docker_junk() is None
+
+
+DOCKER_DF_PCT = "\n".join([
+    '{"Type":"Images","Size":"10GB","Reclaimable":"8GB"}',
+    '{"Type":"Local Volumes","Size":"2GB","Reclaimable":"2GB"}',
+    '{"Type":"Build Cache","Size":"500MB","Reclaimable":"1.5GB (50%)"}',
+])
+
+
+def test_docker_junk_parses_reclaimable_with_percentage_suffix(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.run_command",
+                        lambda cmd: (DOCKER_DF_PCT, "", 0))
+    monkeypatch.setattr("scanner.dev_junk._which",
+                        lambda name: "/usr/local/bin/docker")
+    result = find_docker_junk()
+    assert result["build_cache_bytes"] == int(1.5 * 1000**3)
+
+
+SIMCTL = json.dumps({"devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-15-0": [
+        {"name": "iPhone 12", "isAvailable": False, "udid": "AAA", "state": "Shutdown"},
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+        {"name": "iPhone 16", "isAvailable": True, "udid": "BBB", "state": "Shutdown"},
+    ],
+}})
+
+
+def test_simulators_lists_unavailable_only(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk._which", lambda name: "/usr/bin/xcrun")
+    monkeypatch.setattr("scanner.dev_junk.run_command", lambda cmd: (SIMCTL, "", 0))
+    sims = find_simulators()
+    assert [s["name"] for s in sims] == ["iPhone 12"]
+
+
+def test_simulators_absent(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk._which", lambda name: None)
+    assert find_simulators() == []

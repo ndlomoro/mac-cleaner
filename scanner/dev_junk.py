@@ -3,10 +3,12 @@
 Staleness (see /CONTEXT.md 'Stale') is measured on the project's sources,
 never on the artifact itself.
 """
+import json
 import os
+import shutil as _shutil
 from pathlib import Path
 
-from utils.helpers import HOME, file_age_days, get_dir_size
+from utils.helpers import HOME, file_age_days, get_dir_size, run_command
 
 PROJECT_ROOTS = [
     HOME / "Documents",
@@ -130,3 +132,61 @@ def find_project_artifacts() -> list[dict]:
 
     results.sort(key=lambda r: r["age_days"], reverse=True)
     return results
+
+
+def _which(name: str) -> str | None:
+    return _shutil.which(name)
+
+
+_UNITS = {"B": 1, "KB": 1000, "MB": 1000**2, "GB": 1000**3, "TB": 1000**4}
+
+
+def _parse_docker_size(text: str) -> int:
+    """Parse a docker size string, e.g. '8GB' or '1.5GB (50%)'. Docker's own
+    convention uses decimal units (GB=1000**3), not binary (GiB)."""
+    text = text.strip().split()[0] if text.strip() else text.strip()
+    for unit in ("TB", "GB", "MB", "KB", "B"):
+        if text.upper().endswith(unit):
+            return int(float(text[: -len(unit)]) * _UNITS[unit])
+    return 0
+
+
+def find_docker_junk() -> dict | None:
+    """Reclaimable Docker sizes via `docker system df`. None when docker is absent."""
+    if not _which("docker"):
+        return None
+    stdout, _, rc = run_command(["docker", "system", "df", "--format", "{{json .}}"])
+    if rc != 0:
+        return None
+    sizes = {"images_bytes": 0, "volumes_bytes": 0, "build_cache_bytes": 0}
+    key_map = {"Images": "images_bytes", "Local Volumes": "volumes_bytes",
+               "Build Cache": "build_cache_bytes"}
+    for line in stdout.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = key_map.get(row.get("Type", ""))
+        if key:
+            sizes[key] = _parse_docker_size(row.get("Reclaimable", "0B"))
+    return sizes
+
+
+def find_simulators() -> list[dict]:
+    """Unavailable simulator devices. [] when xcrun is absent."""
+    if not _which("xcrun"):
+        return []
+    stdout, _, rc = run_command(["xcrun", "simctl", "list", "devices", "-j"])
+    if rc != 0:
+        return []
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return []
+    sims = []
+    for runtime, devices in data.get("devices", {}).items():
+        for d in devices:
+            if not d.get("isAvailable", True):
+                sims.append({"name": d.get("name", "?"), "kind": "device",
+                             "size": 0, "udid": d.get("udid", "")})
+    return sims
