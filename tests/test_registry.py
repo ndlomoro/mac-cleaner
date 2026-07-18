@@ -39,7 +39,9 @@ def test_non_trash_junk_is_not_irreversible():
 
 def test_all_cleaner_categories_registered():
     # every category any cleaner passes to safe_delete, plus browser_history
-    # (reserved for future cleaners - not yet passed to safe_delete by any cleaner)
+    # (reserved for future cleaners - not yet passed to safe_delete by any cleaner);
+    # project_artifacts, docker_junk, ios_simulators are the phase-3 categories,
+    # reserved until their scanner/screen wires up
     for key in [
         "caches", "logs", "temp", "downloads", "ios_backups", "large_files",
         "duplicates",
