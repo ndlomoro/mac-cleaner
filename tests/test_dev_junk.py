@@ -223,3 +223,49 @@ def test_simulators_lists_unavailable_only(monkeypatch):
 def test_simulators_absent(monkeypatch):
     monkeypatch.setattr("scanner.dev_junk._which", lambda name: None)
     assert find_simulators() == []
+
+
+def test_docker_command_failure_returns_none(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk._which", lambda name: "/usr/local/bin/docker")
+    monkeypatch.setattr("scanner.dev_junk.run_command", lambda cmd: ("", "boom", 1))
+    assert find_docker_junk() is None
+
+
+def test_simulators_command_failure_returns_empty(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk._which", lambda name: "/usr/bin/xcrun")
+    monkeypatch.setattr("scanner.dev_junk.run_command", lambda cmd: ("", "boom", 1))
+    assert find_simulators() == []
+
+
+DOCKER_DF_BAD_SHAPE = "\n".join([
+    '"just a string"',
+    '{"Type":"Images","Size":"10GB","Reclaimable":"8GB"}',
+])
+
+
+def test_docker_junk_skips_non_dict_json_line(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.run_command",
+                        lambda cmd: (DOCKER_DF_BAD_SHAPE, "", 0))
+    monkeypatch.setattr("scanner.dev_junk._which",
+                        lambda name: "/usr/local/bin/docker")
+    result = find_docker_junk()
+    assert result["images_bytes"] == 8 * 1000**3
+
+
+DOCKER_DF_NULL_RECLAIMABLE = '{"Type":"Images","Size":"10GB","Reclaimable":null}'
+
+
+def test_docker_junk_handles_null_reclaimable(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.run_command",
+                        lambda cmd: (DOCKER_DF_NULL_RECLAIMABLE, "", 0))
+    monkeypatch.setattr("scanner.dev_junk._which",
+                        lambda name: "/usr/local/bin/docker")
+    result = find_docker_junk()
+    assert result["images_bytes"] == 0
+
+
+def test_simulators_handles_devices_wrong_shape(monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk._which", lambda name: "/usr/bin/xcrun")
+    monkeypatch.setattr("scanner.dev_junk.run_command",
+                        lambda cmd: (json.dumps({"devices": []}), "", 0))
+    assert find_simulators() == []

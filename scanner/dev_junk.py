@@ -141,9 +141,12 @@ def _which(name: str) -> str | None:
 _UNITS = {"B": 1, "KB": 1000, "MB": 1000**2, "GB": 1000**3, "TB": 1000**4}
 
 
-def _parse_docker_size(text: str) -> int:
+def _parse_docker_size(text) -> int:
     """Parse a docker size string, e.g. '8GB' or '1.5GB (50%)'. Docker's own
-    convention uses decimal units (GB=1000**3), not binary (GiB)."""
+    convention uses decimal units (GB=1000**3), not binary (GiB). Tolerates
+    non-str input (e.g. a null Reclaimable field) by returning 0."""
+    if not isinstance(text, str):
+        return 0
     text = text.strip().split()[0] if text.strip() else text.strip()
     for unit in ("TB", "GB", "MB", "KB", "B"):
         if text.upper().endswith(unit):
@@ -166,6 +169,8 @@ def find_docker_junk() -> dict | None:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(row, dict):
+            continue
         key = key_map.get(row.get("Type", ""))
         if key:
             sizes[key] = _parse_docker_size(row.get("Reclaimable", "0B"))
@@ -183,9 +188,14 @@ def find_simulators() -> list[dict]:
         data = json.loads(stdout)
     except json.JSONDecodeError:
         return []
+    devices_by_runtime = data.get("devices")
+    if not isinstance(devices_by_runtime, dict):
+        return []
     sims = []
-    for runtime, devices in data.get("devices", {}).items():
+    for runtime, devices in devices_by_runtime.items():
         for d in devices:
+            if not isinstance(d, dict):
+                continue
             if not d.get("isAvailable", True):
                 sims.append({"name": d.get("name", "?"), "kind": "device",
                              "size": 0, "udid": d.get("udid", "")})
