@@ -124,3 +124,40 @@ def test_permission_denied_dir_does_not_crash_scan(tmp_path, monkeypatch):
         os.chmod(locked, 0o755)
 
     assert len([r for r in results if r["kind"] == "node_modules"]) == 1
+
+
+def test_locked_venv_dir_does_not_crash_scan(tmp_path, monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    # a sibling, ordinary project - its artifacts must still surface even
+    # though the locked-venv project below must not crash the whole scan
+    _make_node_project(tmp_path, "other-app", 10, 10)
+
+    proj = tmp_path / "pyapp"
+    venv = proj / ".venv"
+    venv.mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin")
+    (proj / "app.py").write_text("pass")
+    os.chmod(venv, 0o000)
+
+    try:
+        if os.access(venv, os.X_OK):
+            # chmod-based denial doesn't reproduce under this test user
+            # (e.g. running as root, which ignores mode bits) - force the
+            # PermissionError path deterministically instead.
+            import scanner.dev_junk as dj
+            real_exists = Path.exists
+
+            def fake_exists(self, *a, **kw):
+                if self == venv / "pyvenv.cfg":
+                    raise PermissionError("simulated for test")
+                return real_exists(self, *a, **kw)
+
+            monkeypatch.setattr(dj.Path, "exists", fake_exists)
+
+        results = find_project_artifacts()  # must not raise
+    finally:
+        os.chmod(venv, 0o755)
+
+    # the locked venv may or may not be reported, but the scan must complete
+    # and the sibling project's artifacts must still show up
+    assert any(r["kind"] == "node_modules" and r["project"] == "other-app" for r in results)

@@ -31,9 +31,11 @@ _CACHE_ROOTS = [
 ]
 
 
-def _looks_like_venv(dirpath: str, name: str) -> bool:
+def _looks_like_venv(candidate: Path) -> bool:
+    """True if `candidate` is a directory containing pyvenv.cfg. Guarded: a
+    permission-denied candidate must never crash the scan."""
     try:
-        return (Path(dirpath) / name / "pyvenv.cfg").exists()
+        return (candidate / "pyvenv.cfg").exists()
     except (OSError, PermissionError):
         return False
 
@@ -42,16 +44,13 @@ def _project_source_age(project: Path) -> int:
     """Days since the project's newest source mtime. Prunes all artifact dirs
     (node_modules/target/venvs/.git) topdown - never enters them."""
     newest = None
-    for dirpath, dirnames, filenames in os.walk(project, topdown=True, onerror=lambda e: None):
+    for dirpath, dirnames, filenames in os.walk(project, topdown=True):
         dirnames[:] = [d for d in dirnames
                        if d not in _PRUNE_DIRS
                        and not d.startswith(".")
-                       and not _looks_like_venv(dirpath, d)]
+                       and not _looks_like_venv(Path(dirpath) / d)]
         for fname in filenames:
-            try:
-                age = file_age_days(Path(dirpath) / fname)
-            except (OSError, PermissionError):
-                continue
+            age = file_age_days(Path(dirpath) / fname)
             if newest is None or age < newest:
                 newest = age
     return int(newest) if newest is not None else int(file_age_days(project))
@@ -61,7 +60,7 @@ def _venv_dirs(candidate: Path) -> list[Path]:
     out = []
     for name in (".venv", "venv"):
         v = candidate / name
-        if (v / "pyvenv.cfg").exists():
+        if _looks_like_venv(v):
             out.append(v)
     return out
 
