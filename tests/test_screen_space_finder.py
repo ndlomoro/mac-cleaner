@@ -116,7 +116,11 @@ async def test_skipped_items_stay_listed(tmp_path, monkeypatch, fake_trash):
     from scanner.system_data import ScanResult
     dl = ScanResult("downloads", "Downloads")
     good = tmp_path / "old.dmg"; good.write_bytes(b"x" * 10)
-    hard = P.home() / ".ssh" / "id_ed25519"   # hard-protected -> SKIPPED
+    # hard-protected -> SKIPPED. A nonexistent name under ~/.ssh, not the
+    # developer's real key: is_protected() runs before any existence check,
+    # so the protection assertion still holds without risking the real
+    # ~/.ssh/id_ed25519 if this protection ever regresses.
+    hard = P.home() / ".ssh" / "mac-cleaner-test-nonexistent-key"
     dl.add_file(str(good), 10, 400)
     dl.add_file(str(hard), 5, 900)
     monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])

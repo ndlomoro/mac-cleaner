@@ -1,4 +1,6 @@
 """Dashboard - disk usage + feature areas. Number keys navigate."""
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
@@ -85,7 +87,14 @@ class DashboardScreen(Screen):
             ]
             if artifacts:
                 total = sum(a["size"] for a in artifacts)
-                n_projects = len({a["project"] for a in artifacts})
+                # Distinct parent dirs, not project names - two projects that
+                # happen to share a basename (e.g. two different "api"
+                # checkouts) must count separately; gradle_cache/maven_repo
+                # are shared cache pseudo-rows, not projects, so excluded.
+                n_projects = len({
+                    str(Path(a["path"]).parent) for a in artifacts
+                    if a["kind"] not in ("gradle_cache", "maven_repo")
+                })
                 lines.append(
                     f"Dev junk: ~{format_size(total)} across {n_projects} projects")
             if lines:

@@ -1,3 +1,5 @@
+from pathlib import Path as P
+
 from ui.app import CleanerApp
 from ui.screens.dev_junk import DevJunkScreen
 from ui.screens.junk import JunkScreen
@@ -87,6 +89,60 @@ async def test_quick_scan_summarizes(monkeypatch, tmp_path):
         text = str(app.screen.query_one("#summary").content)
         assert "User Caches" in text and "1 items" in text
         assert "Dev junk:" in text and "2 projects" in text
+
+
+async def test_quick_scan_counts_same_named_projects_separately(monkeypatch, tmp_path):
+    # Two different checkouts that happen to share a project basename ("api")
+    # must count as 2 projects, not collapse into 1 the way a project-name
+    # set used to.
+    from scanner.system_data import ScanResult
+    monkeypatch.setattr("ui.screens.dashboard.get_disk_usage",
+                        lambda: {"total": 1000, "used": 400, "free": 600, "percent": 40})
+    monkeypatch.setattr("ui.screens.dashboard.scan_all", lambda: [])
+    monkeypatch.setattr("ui.screens.dashboard.scan_space_finder", lambda: [])
+    monkeypatch.setattr("ui.screens.dashboard.find_project_artifacts",
+                         lambda: [
+                             {"path": "/repos/client-a/api/node_modules", "size": 100,
+                              "age_days": 1, "kind": "node_modules", "project": "api"},
+                             {"path": "/repos/client-b/api/node_modules", "size": 100,
+                              "age_days": 1, "kind": "node_modules", "project": "api"},
+                         ])
+    from ui.app import CleanerApp
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        text = str(app.screen.query_one("#summary").content)
+        assert "2 projects" in text
+
+
+async def test_quick_scan_excludes_cache_pseudo_rows_from_project_count(monkeypatch, tmp_path):
+    monkeypatch.setattr("ui.screens.dashboard.get_disk_usage",
+                        lambda: {"total": 1000, "used": 400, "free": 600, "percent": 40})
+    monkeypatch.setattr("ui.screens.dashboard.scan_all", lambda: [])
+    monkeypatch.setattr("ui.screens.dashboard.scan_space_finder", lambda: [])
+    monkeypatch.setattr("ui.screens.dashboard.find_project_artifacts",
+                         lambda: [
+                             {"path": "/repos/app/node_modules", "size": 100,
+                              "age_days": 1, "kind": "node_modules", "project": "app"},
+                             {"path": str(P.home() / ".gradle" / "caches"), "size": 50,
+                              "age_days": None, "kind": "gradle_cache",
+                              "project": "gradle cache"},
+                             {"path": str(P.home() / ".m2" / "repository"), "size": 30,
+                              "age_days": None, "kind": "maven_repo",
+                              "project": "maven repo"},
+                         ])
+    from ui.app import CleanerApp
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        text = str(app.screen.query_one("#summary").content)
+        assert "1 projects" in text
 
 
 async def test_quick_scan_omits_dev_junk_line_when_empty(monkeypatch, tmp_path):

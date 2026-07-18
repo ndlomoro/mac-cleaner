@@ -125,12 +125,17 @@ def find_project_artifacts() -> list[dict]:
             results.append({
                 "path": str(cache_root),
                 "size": get_dir_size(cache_root),
-                "age_days": int(file_age_days(cache_root)),
+                # No real staleness signal for a shared cache root (it's not
+                # tied to a single project's sources) - None, never a fake
+                # age that would let it masquerade as genuinely stale.
+                "age_days": None,
                 "kind": kind,
                 "project": kind.replace("_", " "),
             })
 
-    results.sort(key=lambda r: r["age_days"], reverse=True)
+    # Stalest-first; None (cache-root rows) sorts as 0, never floating a
+    # fake-stale cache row to the top ahead of genuinely stale projects.
+    results.sort(key=lambda r: r["age_days"] or 0, reverse=True)
     return results
 
 

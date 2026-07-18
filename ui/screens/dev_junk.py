@@ -115,8 +115,16 @@ class DevJunkScreen(Screen):
         sel = self.query_one("#list-artifacts", SelectionList)
         for i, item in enumerate(rows):
             self.items[i] = item
-            label = (f"{format_size(item['size']):>10}  {item['age_days']:>4}d idle  "
-                      f"{item['kind']:<14} {item['project']}")
+            age = item["age_days"]
+            # gradle_cache/maven_repo pseudo-rows carry no real staleness
+            # signal (see scanner/dev_junk.py) - age_days is None for those,
+            # never a fake "900d idle" that would float them to the top.
+            age_str = f"{age:>4}d idle" if age is not None else "   —  "
+            path = item["path"]
+            path_display = path if len(path) <= 40 else f"…{path[-40:]}"
+            label = (f"{format_size(item['size']):>10}  {age_str}  "
+                      f"{item['kind']:<14} {item['project']}"
+                      f"  [dim]{path_display}[/dim]")
             sel.add_option(Selection(label, i, initial_state=False))
         # Options added after mount don't auto-highlight (unlike options passed
         # at construction time); without this, space/enter do nothing until the
@@ -178,8 +186,10 @@ class DevJunkScreen(Screen):
         self._refreshing += 1
 
         def _done(docker: dict | None) -> None:
-            self._fill_docker(docker)
-            self._refreshing -= 1
+            try:
+                self._fill_docker(docker)
+            finally:
+                self._refreshing -= 1
 
         def _error(exc: Exception) -> None:
             self._refreshing -= 1
@@ -191,8 +201,10 @@ class DevJunkScreen(Screen):
         self._refreshing += 1
 
         def _done(sims: list[dict]) -> None:
-            self._fill_sims(sims)
-            self._refreshing -= 1
+            try:
+                self._fill_sims(sims)
+            finally:
+                self._refreshing -= 1
 
         def _error(exc: Exception) -> None:
             self._refreshing -= 1
@@ -224,7 +236,12 @@ class DevJunkScreen(Screen):
                     return run_command(argv)
 
                 def _done(result: tuple[str, str, int]) -> None:
-                    stdout, _stderr, _rc = result
+                    stdout, stderr, rc = result
+                    if rc != 0:
+                        self.notify(
+                            f"Docker prune failed: {stderr.strip() or 'unknown error'}",
+                            severity="error")
+                        return
                     lines = stdout.strip().splitlines()
                     tail = lines[-1] if lines else "done"
                     self.notify(f"Reclaimed: {tail}")
@@ -238,7 +255,8 @@ class DevJunkScreen(Screen):
             push_modal(
                 self,
                 ConfirmModal("Also prune volumes? Volumes can hold real data "
-                              "(databases).", confirm_label="Prune volumes"),
+                              "(databases).", confirm_label="Prune volumes",
+                              decline_label="Images only"),
                 _volumes_resolved,
             )
 
@@ -267,6 +285,12 @@ class DevJunkScreen(Screen):
                 return run_command(["xcrun", "simctl", "delete", "unavailable"])
 
             def _done(result: tuple[str, str, int]) -> None:
+                stdout, stderr, rc = result
+                if rc != 0:
+                    self.notify(
+                        f"Simulator cleanup failed: {stderr.strip() or 'unknown error'}",
+                        severity="error")
+                    return
                 self.notify("Deleted unavailable simulators.")
                 self._rescan_sims()
 

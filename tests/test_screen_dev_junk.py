@@ -144,7 +144,12 @@ async def test_decline_leaves_everything(tmp_path, monkeypatch, fake_trash):
 async def test_skipped_items_stay_listed(tmp_path, monkeypatch, fake_trash):
     good = tmp_path / "node_modules"
     good.mkdir()
-    hard = P.home() / ".ssh" / "id_ed25519"   # hard-protected -> SKIPPED
+    # hard-protected -> SKIPPED. A nonexistent name under ~/.ssh, not the
+    # developer's real key: is_protected() runs before any existence check,
+    # so the protection assertion still holds without risking the real
+    # ~/.ssh/id_ed25519 if this protection ever regresses (the trash fake
+    # in some fixtures renames the path it's given).
+    hard = P.home() / ".ssh" / "mac-cleaner-test-nonexistent-key"
     rows = [_row(good), _row(hard, size=5, age_days=900, kind="venv", project="ssh")]
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts", lambda: rows)
     _no_docker_or_sims(monkeypatch)
@@ -187,6 +192,50 @@ async def test_selected_total_footer_updates_and_resets(tmp_path, monkeypatch, f
         assert not f.exists()
         # selections were cleared by the trash pass - footer resets
         assert "Nothing selected" in footer.content
+
+
+async def test_row_label_shows_abbreviated_path(tmp_path, monkeypatch, fake_trash):
+    long_path = tmp_path / ("a" * 60) / "node_modules"
+    monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
+                        lambda: [_row(long_path)])
+    _no_docker_or_sims(monkeypatch)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        sel = host.screen.query_one("#list-artifacts", SelectionList)
+        label = str(sel.get_option_at_index(0).prompt)
+        full = str(long_path)
+        assert full not in label            # too long -> abbreviated
+        assert f"…{full[-40:]}" in label
+
+
+async def test_row_label_shows_full_path_when_short(monkeypatch, fake_trash):
+    short_path = "/tmp/proj/node_modules"   # deliberately short/fixed, unlike
+    # tmp_path (macOS temp dirs are themselves 40+ chars, which would
+    # spuriously abbreviate and defeat this "short path" case)
+    monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
+                        lambda: [_row(short_path)])
+    _no_docker_or_sims(monkeypatch)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        sel = host.screen.query_one("#list-artifacts", SelectionList)
+        label = str(sel.get_option_at_index(0).prompt)
+        assert str(short_path) in label
+
+
+async def test_cache_root_row_renders_no_fake_staleness(tmp_path, monkeypatch, fake_trash):
+    row = _row(tmp_path / "caches", age_days=None, kind="gradle_cache",
+               project="gradle cache")
+    monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts", lambda: [row])
+    _no_docker_or_sims(monkeypatch)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        sel = host.screen.query_one("#list-artifacts", SelectionList)
+        label = str(sel.get_option_at_index(0).prompt)
+        assert "d idle" not in label
+        assert "—" in label
 
 
 # ---------- Docker / Simulators zones ----------
@@ -409,6 +458,115 @@ async def test_shared_refresh_counter_prevents_resume_rescan_race(monkeypatch, f
         await pilot.pause()
 
     assert rescan_calls == [1]          # still only the initial mount rescan
+
+
+async def test_docker_prune_rc_nonzero_reports_error_not_reclaimed(monkeypatch, fake_trash):
+    # Reviewer repro: run_command's rc was silently ignored, so a daemon
+    # that fails to prune (e.g. "docker" not running) was reported to the
+    # user as a success ("Reclaimed: ...").
+    _patch_docker_sims(monkeypatch, docker=_docker_dict())
+    monkeypatch.setattr("ui.screens.dev_junk.run_command",
+                        lambda argv, sudo=False: ("", "daemon not running", 1))
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        notifications = []
+        host.screen.notify = lambda msg, **kw: notifications.append(
+            (msg, kw.get("severity")))
+
+        await pilot.press("D")
+        await pilot.pause()
+        for ch in "yes":
+            await pilot.press(ch)
+        await pilot.press("enter")     # TypedGateModal confirmed -> volumes ConfirmModal
+        await pilot.pause()
+        await pilot.press("escape")    # decline volumes
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not any("Reclaimed" in msg for msg, _ in notifications)
+        errors = [msg for msg, sev in notifications if sev == "error"]
+        assert any("Docker prune failed" in msg and "daemon not running" in msg
+                   for msg in errors)
+
+
+async def test_simulator_cleanup_rc_nonzero_reports_error_not_deleted(monkeypatch, fake_trash):
+    _patch_docker_sims(monkeypatch, sims=[_sim()])
+    monkeypatch.setattr("ui.screens.dev_junk.run_command",
+                        lambda argv, sudo=False: ("", "daemon not running", 1))
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        notifications = []
+        host.screen.notify = lambda msg, **kw: notifications.append(
+            (msg, kw.get("severity")))
+
+        await pilot.press("S")
+        await pilot.pause()
+        for ch in "yes":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not any("Deleted" in msg for msg, _ in notifications)
+        errors = [msg for msg, sev in notifications if sev == "error"]
+        assert any("Simulator cleanup failed" in msg and "daemon not running" in msg
+                   for msg in errors)
+
+
+def _sync_run_offthread(screen, work, done, on_error):
+    """Test stand-in for run_offthread that runs synchronously (no real
+    thread worker) so a raise out of `done` can be observed directly instead
+    of surfacing as an opaque textual.worker.WorkerFailed at app teardown -
+    run_offthread itself never guards a `done` raise (see its docstring), so
+    this mirrors production behavior; it just lets the test catch what
+    production would otherwise propagate."""
+    result = work()
+    try:
+        done(result)
+    except Exception:
+        pass
+
+
+async def test_rescan_docker_refreshing_counter_does_not_leak_on_fill_error(
+        monkeypatch, fake_trash):
+    # Reviewer repro: if _fill_docker/_fill_sims raises, the decrement was
+    # skipped and _refreshing stayed > 0 forever, wedging _busy() permanently.
+    _patch_docker_sims(monkeypatch, docker=_docker_dict())
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+
+        def _boom(_docker):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(host.screen, "_fill_docker", _boom)
+        monkeypatch.setattr("ui.screens.dev_junk.run_offthread", _sync_run_offthread)
+        host.screen._rescan_docker()
+        await pilot.pause()
+
+        assert host.screen._refreshing == 0
+        assert not host.screen._busy()
+
+
+async def test_rescan_sims_refreshing_counter_does_not_leak_on_fill_error(
+        monkeypatch, fake_trash):
+    _patch_docker_sims(monkeypatch, sims=[_sim()])
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+
+        def _boom(_sims):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(host.screen, "_fill_sims", _boom)
+        monkeypatch.setattr("ui.screens.dev_junk.run_offthread", _sync_run_offthread)
+        host.screen._rescan_sims()
+        await pilot.pause()
+
+        assert host.screen._refreshing == 0
+        assert not host.screen._busy()
 
 
 async def test_docker_prune_refused_while_trashing(tmp_path, monkeypatch, fake_trash):

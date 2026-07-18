@@ -164,6 +164,43 @@ def test_locked_venv_dir_does_not_crash_scan(tmp_path, monkeypatch):
     assert any(r["kind"] == "node_modules" and r["project"] == "other-app" for r in results)
 
 
+def test_cache_roots_have_no_fake_staleness(tmp_path, monkeypatch):
+    # gradle_cache/maven_repo are shared cache roots, not tied to a single
+    # project's sources - age_days must be None (never a real-looking
+    # "900d idle" figure that would misrepresent staleness or let the row
+    # float to the top of a stalest-first sort ahead of genuinely stale
+    # projects).
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [])
+    gradle = tmp_path / "gradle-caches"
+    gradle.mkdir()
+    (gradle / "modules-2").write_bytes(b"x" * 10)
+    maven = tmp_path / "m2-repo"
+    maven.mkdir()
+    (maven / "repository.jar").write_bytes(b"x" * 20)
+    monkeypatch.setattr("scanner.dev_junk._CACHE_ROOTS", [
+        ("gradle_cache", gradle), ("maven_repo", maven),
+    ])
+    results = find_project_artifacts()
+    by_kind = {r["kind"]: r for r in results}
+    assert set(by_kind) == {"gradle_cache", "maven_repo"}
+    assert by_kind["gradle_cache"]["age_days"] is None
+    assert by_kind["maven_repo"]["age_days"] is None
+
+
+def test_stalest_first_sort_treats_none_age_as_zero_not_top(tmp_path, monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    _make_node_project(tmp_path, "dead-app", src_days=500, nm_days=1)
+    cache = tmp_path / "gradle-caches"
+    cache.mkdir()
+    (cache / "modules-2").write_bytes(b"x" * 10)
+    monkeypatch.setattr("scanner.dev_junk._CACHE_ROOTS", [("gradle_cache", cache)])
+    results = find_project_artifacts()
+    # stalest-first: the genuinely 500d-stale project must sort ahead of the
+    # cache-root row, which has no real staleness signal (None -> 0).
+    assert results[0]["kind"] == "node_modules"
+    assert results[-1]["kind"] == "gradle_cache"
+
+
 DOCKER_DF = "\n".join([
     '{"Type":"Images","Size":"10GB","Reclaimable":"8GB"}',
     '{"Type":"Local Volumes","Size":"2GB","Reclaimable":"2GB"}',

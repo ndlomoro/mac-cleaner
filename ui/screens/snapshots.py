@@ -42,6 +42,7 @@ class SnapshotsScreen(Screen):
         self._rescan()
 
     def _load_error(self, exc: Exception) -> None:
+        self.query_one("#snap-list", Static).update("Could not list snapshots.")
         self.notify(f"Failed to list snapshots: {exc}", severity="error")
 
     def _show(self, snaps) -> None:
