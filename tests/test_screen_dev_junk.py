@@ -21,6 +21,16 @@ def _row(path, size=10, age_days=400, kind="node_modules", project="foo"):
             "kind": kind, "project": project}
 
 
+def _no_docker_or_sims(monkeypatch):
+    """Tests exercising only the artifacts zone must not shell out to the
+    REAL docker/xcrun via find_docker_junk/find_simulators - besides being
+    slow/non-deterministic across machines, letting the real scan run long
+    enough can leave _scanning True past a single pilot.pause(), which the
+    trash/prune/sim actions now correctly treat as busy and refuse."""
+    monkeypatch.setattr("ui.screens.dev_junk.find_docker_junk", lambda: None)
+    monkeypatch.setattr("ui.screens.dev_junk.find_simulators", lambda: [])
+
+
 def _docker_dict(images=1_000_000_000, volumes=2_000_000_000, build_cache=3_000_000_000):
     return {"images_bytes": images, "volumes_bytes": volumes,
             "build_cache_bytes": build_cache}
@@ -48,6 +58,7 @@ async def test_nothing_preselected_and_no_select_all(tmp_path, monkeypatch, fake
     f.mkdir()
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
                         lambda: [_row(f)])
+    _no_docker_or_sims(monkeypatch)
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -63,6 +74,7 @@ async def test_pick_confirm_trash(tmp_path, monkeypatch, fake_trash):
     f.mkdir()
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
                         lambda: [_row(f)])
+    _no_docker_or_sims(monkeypatch)
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -88,6 +100,7 @@ async def test_pick_confirm_trash_then_reclaim_confirmed(tmp_path, monkeypatch, 
     f.mkdir()
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
                         lambda: [_row(f)])
+    _no_docker_or_sims(monkeypatch)
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -116,6 +129,7 @@ async def test_decline_leaves_everything(tmp_path, monkeypatch, fake_trash):
     f.mkdir()
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
                         lambda: [_row(f)])
+    _no_docker_or_sims(monkeypatch)
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -133,6 +147,7 @@ async def test_skipped_items_stay_listed(tmp_path, monkeypatch, fake_trash):
     hard = P.home() / ".ssh" / "id_ed25519"   # hard-protected -> SKIPPED
     rows = [_row(good), _row(hard, size=5, age_days=900, kind="venv", project="ssh")]
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts", lambda: rows)
+    _no_docker_or_sims(monkeypatch)
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -151,6 +166,7 @@ async def test_selected_total_footer_updates_and_resets(tmp_path, monkeypatch, f
     f.mkdir()
     monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts",
                         lambda: [_row(f, size=10)])
+    _no_docker_or_sims(monkeypatch)
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -341,5 +357,96 @@ async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, f
         await pilot.press("escape")          # decline the reclaim gate
 
     assert rescan_calls == [1]                # only the initial on_mount rescan
+    assert not f.exists()
+    assert (fake_trash / "node_modules").exists()
+
+
+async def test_shared_refresh_counter_prevents_resume_rescan_race(monkeypatch, fake_trash):
+    """Reviewer repro: _rescan_docker/_rescan_sims used to share a single
+    _scanning boolean. A fast sims refresh landing while a slow docker
+    refresh is still in flight cleared that boolean out from under the
+    docker refresh, so a resume mid-window incorrectly fired a full
+    _rescan() (clobbering whatever _fill_docker/_fill_sims were writing -
+    the DuplicateIds crash the review flagged is one symptom of this race).
+    The _refreshing counter must stay > 0 as long as EITHER refresh is
+    outstanding, regardless of which one finishes first."""
+    monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts", lambda: [])
+
+    def slow_docker():
+        time.sleep(0.3)
+        return _docker_dict()
+
+    def fast_sims():
+        return [_sim()]
+
+    monkeypatch.setattr("ui.screens.dev_junk.find_docker_junk", slow_docker)
+    monkeypatch.setattr("ui.screens.dev_junk.find_simulators", fast_sims)
+
+    rescan_calls = []
+    real_rescan = dev_junk_mod.DevJunkScreen._rescan
+
+    def counting_rescan(self):
+        rescan_calls.append(1)
+        real_rescan(self)
+
+    monkeypatch.setattr(dev_junk_mod.DevJunkScreen, "_rescan", counting_rescan)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.4)   # let the initial on_mount scan fully settle
+        await pilot.pause()
+        assert rescan_calls == [1]
+
+        # Mirrors what the D/S bindings do after a prune/delete: kick off a
+        # fast sims-only refresh and a slow docker-only refresh together.
+        host.screen._rescan_sims()
+        host.screen._rescan_docker()
+        await pilot.pause()             # let the fast sims refresh land and decrement
+        host.screen.on_screen_resume()  # docker refresh still in flight - must be a no-op
+        await pilot.pause()
+        await asyncio.sleep(0.4)        # let the slow docker refresh land
+        await pilot.pause()
+
+    assert rescan_calls == [1]          # still only the initial mount rescan
+
+
+async def test_docker_prune_refused_while_trashing(tmp_path, monkeypatch, fake_trash):
+    """Cross-guard: the three action flows (t/D/S) share one screen's worth
+    of busy state - a Docker prune must be refused while a trash is still
+    in flight, not just while another prune is in flight."""
+    f = tmp_path / "node_modules"
+    f.mkdir()
+    monkeypatch.setattr("ui.screens.dev_junk.find_project_artifacts", lambda: [_row(f)])
+    monkeypatch.setattr("ui.screens.dev_junk.find_docker_junk", lambda: _docker_dict())
+    monkeypatch.setattr("ui.screens.dev_junk.find_simulators", lambda: [])
+    recorder = _RunCommandRecorder()
+    monkeypatch.setattr("ui.screens.dev_junk.run_command", recorder)
+
+    real_safe_delete = dev_junk_mod.safe_delete
+
+    def slow_safe_delete(*args, **kwargs):
+        time.sleep(0.3)
+        return real_safe_delete(*args, **kwargs)
+
+    monkeypatch.setattr("ui.screens.dev_junk.safe_delete", slow_safe_delete)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        sel = host.screen.query_one("#list-artifacts", SelectionList)
+        sel.focus()
+        await pilot.press("space")
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.click("#confirm")   # starts the 0.3s-slow trash worker
+        await pilot.press("D")          # refused: a trash is in flight
+        await pilot.pause()
+        assert recorder.calls == []
+
+        await asyncio.sleep(0.4)        # let the slow trash worker land
+        await pilot.pause()
+        await pilot.press("escape")     # decline the reclaim offer
+
     assert not f.exists()
     assert (fake_trash / "node_modules").exists()

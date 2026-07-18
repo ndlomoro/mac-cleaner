@@ -16,16 +16,17 @@ class ConfirmModal(ModalScreen[bool]):
     ConfirmModal #gate-box { width: 60; height: auto; border: thick $warning; padding: 1 2; }
     """
 
-    def __init__(self, prompt: str) -> None:
+    def __init__(self, prompt: str, confirm_label: str = "Move to Trash") -> None:
         super().__init__()
         self.prompt = prompt
+        self.confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
         with Vertical(id="gate-box"):
             yield Label(self.prompt)
             with Horizontal():
                 yield Button("Cancel", variant="primary", id="cancel")
-                yield Button("Move to Trash", variant="warning", id="confirm")
+                yield Button(self.confirm_label, variant="warning", id="confirm")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "confirm")

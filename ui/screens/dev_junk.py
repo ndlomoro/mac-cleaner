@@ -50,9 +50,27 @@ class DevJunkScreen(Screen):
         self._trashing = False
         self._pruning = False
         self._sim_cleaning = False
+        # In-flight counter (not a boolean) for the standalone section
+        # refreshes (_rescan_docker/_rescan_sims): a docker-only refresh and a
+        # sims-only refresh can be in flight at the same time (e.g. one
+        # kicked off right after the other's gated action completed), and a
+        # shared boolean would let the faster one's terminal callback clear
+        # busy state out from under the slower one still running - letting a
+        # resume mid-window fire a full _rescan() that clobbers a section
+        # still being written. Each refresh increments before starting and
+        # decrements in its own terminal callback, so busy stays true as long
+        # as ANY refresh is outstanding, regardless of interleaving.
+        self._refreshing = 0
         self._docker: dict | None = None
         self._sims: list[dict] = []
         self._rescan()
+
+    def _busy(self) -> bool:
+        """True if any scan/trash/prune/clean/refresh is in flight - every
+        action entry point and on_screen_resume must check this before
+        starting/rescanning."""
+        return (self._scanning or self._trashing or self._pruning
+                or self._sim_cleaning or self._refreshing > 0)
 
     def _rescan(self) -> None:
         # option index -> item dict
@@ -67,8 +85,7 @@ class DevJunkScreen(Screen):
         self.run_worker(self._scan, thread=True)
 
     def on_screen_resume(self) -> None:
-        if (skip_resume_rescan(self) or self._scanning or self._trashing
-                or self._pruning or self._sim_cleaning):
+        if skip_resume_rescan(self) or self._busy():
             return
         self._rescan()
 
@@ -153,31 +170,32 @@ class DevJunkScreen(Screen):
             section.mount(Static(lines, id="sims"))
 
     def _rescan_docker(self) -> None:
-        # Read-only refresh after a prune - reuses _scanning (already covered
-        # by on_screen_resume) rather than a dedicated flag, since it's set
-        # synchronously here before returning, closing the gap the same way
-        # SnapshotsScreen's post-delete _rescan() does.
-        self._scanning = True
+        # Read-only refresh after a prune - shares the _refreshing counter
+        # (not _scanning) with _rescan_sims, since the two can be in flight
+        # concurrently; see on_mount for why this must be a counter, not a
+        # boolean. Incremented synchronously here before returning, closing
+        # the gap the same way SnapshotsScreen's post-delete _rescan() does.
+        self._refreshing += 1
 
         def _done(docker: dict | None) -> None:
             self._fill_docker(docker)
-            self._scanning = False
+            self._refreshing -= 1
 
         def _error(exc: Exception) -> None:
-            self._scanning = False
+            self._refreshing -= 1
             self.notify(f"Docker rescan failed: {exc}", severity="error")
 
         run_offthread(self, find_docker_junk, _done, _error)
 
     def _rescan_sims(self) -> None:
-        self._scanning = True
+        self._refreshing += 1
 
         def _done(sims: list[dict]) -> None:
             self._fill_sims(sims)
-            self._scanning = False
+            self._refreshing -= 1
 
         def _error(exc: Exception) -> None:
-            self._scanning = False
+            self._refreshing -= 1
             self.notify(f"Simulators rescan failed: {exc}", severity="error")
 
         run_offthread(self, find_simulators, _done, _error)
@@ -186,8 +204,8 @@ class DevJunkScreen(Screen):
         if self._docker is None:
             self.notify("Docker is not installed.")
             return
-        if self._pruning:
-            self.notify("Already pruning…")
+        if self._busy():
+            self.notify("Busy - wait for the current operation.")
             return
         self._pruning = True
 
@@ -220,7 +238,7 @@ class DevJunkScreen(Screen):
             push_modal(
                 self,
                 ConfirmModal("Also prune volumes? Volumes can hold real data "
-                              "(databases)."),
+                              "(databases).", confirm_label="Prune volumes"),
                 _volumes_resolved,
             )
 
@@ -234,8 +252,8 @@ class DevJunkScreen(Screen):
         if not self._sims:
             self.notify("Xcode simulators not found.")
             return
-        if self._sim_cleaning:
-            self.notify("Already cleaning…")
+        if self._busy():
+            self.notify("Busy - wait for the current operation.")
             return
         self._sim_cleaning = True
 
@@ -296,8 +314,12 @@ class DevJunkScreen(Screen):
         # clear it directly; the trash-done branch clears it only when no
         # reclaim is offered, otherwise handing the flag off to
         # _offer_reclaim exactly like Junk's chain.
-        if self._trashing:
-            self.notify("Already trashing…")
+        #
+        # Guarded with _busy() (not just self._trashing) so this also refuses
+        # while a Docker prune or simulator cleanup is in flight - the three
+        # action flows on this screen are cross-guarded, not just self-guarded.
+        if self._busy():
+            self.notify("Busy - wait for the current operation.")
             return
         sel = self.query_one("#list-artifacts", SelectionList)
         rows = [self.items[i] for i in sel.selected]

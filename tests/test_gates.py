@@ -1,4 +1,5 @@
 from textual.app import App
+from textual.widgets import Button
 
 from ui.widgets.gates import ConfirmModal, TypedGateModal
 
@@ -58,3 +59,19 @@ async def test_typed_gate_cancel_button():
     async with host.run_test() as pilot:
         await pilot.click("#cancel")
     assert host.result is False
+
+
+async def test_confirm_modal_custom_confirm_label():
+    # Default preserved for every existing call site (trashing).
+    host = Host(ConfirmModal("Move 1 item to Trash?"))
+    async with host.run_test() as pilot:
+        assert host.screen.query_one("#confirm", Button).label == "Move to Trash"
+        await pilot.press("escape")
+
+    # A permanent, non-Trash action (e.g. Docker volume pruning) must not
+    # show the dishonest "Move to Trash" label on its confirm button.
+    host = Host(ConfirmModal("Also prune volumes?", confirm_label="Prune volumes"))
+    async with host.run_test() as pilot:
+        assert host.screen.query_one("#confirm", Button).label == "Prune volumes"
+        await pilot.click("#confirm")
+    assert host.result is True
