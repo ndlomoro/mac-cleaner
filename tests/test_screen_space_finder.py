@@ -100,6 +100,31 @@ async def test_decline_leaves_everything(tmp_path, monkeypatch, fake_trash):
         assert f.exists()
 
 
+async def test_skipped_items_stay_listed(tmp_path, monkeypatch, fake_trash):
+    from pathlib import Path as P
+
+    from scanner.system_data import ScanResult
+    dl = ScanResult("downloads", "Downloads")
+    good = tmp_path / "old.dmg"; good.write_bytes(b"x" * 10)
+    hard = P.home() / ".ssh" / "id_ed25519"   # hard-protected -> SKIPPED
+    dl.add_file(str(good), 10, 400)
+    dl.add_file(str(hard), 5, 900)
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr("ui.screens.space_finder.find_large_files", lambda **kw: [])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates", lambda **kw: [])
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        sel = host.screen.query_one("#list-downloads", SelectionList)
+        sel.select(0); sel.select(1)
+        await pilot.press("t"); await pilot.pause()
+        await pilot.click("#confirm"); await pilot.pause()
+        await pilot.press("escape"); await pilot.pause()   # decline reclaim offer
+        remaining = {it["path"] for it in host.screen.items["downloads"].values()}
+        assert str(hard) in remaining          # skipped item still listed
+        assert str(good) not in remaining      # trashed item removed
+
+
 async def test_keep_one_invariant(tmp_path, monkeypatch, fake_trash):
     a = tmp_path / "a.jpg"; a.write_bytes(b"1234")
     b = tmp_path / "b.jpg"; b.write_bytes(b"1234")

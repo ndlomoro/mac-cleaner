@@ -92,7 +92,7 @@ class SpaceFinderScreen(Screen):
                             if it["group"] == group_hash)
             if len(chosen) >= group_size:
                 # refuse: deselect the highest-indexed pick and warn
-                sel.deselect(chosen[-1])
+                sel.deselect(sorted(chosen)[-1])
                 self.notify("One copy of each duplicate is always kept.",
                             severity="warning")
 
@@ -120,7 +120,7 @@ class SpaceFinderScreen(Screen):
                 for category, rows in picked.items()
             ]
             self.query_one(ReportView).show(reports)
-            self._refresh_lists(picked)
+            self._refresh_lists(picked, reports)
             if any(r.trashed for r in reports):
                 self._offer_reclaim(reports)
 
@@ -129,8 +129,12 @@ class SpaceFinderScreen(Screen):
             _resolved,
         )
 
-    def _refresh_lists(self, picked: dict[str, list[dict]]) -> None:
-        trashed_paths = {f["path"] for v in picked.values() for f in v}
+    def _refresh_lists(self, picked: dict[str, list[dict]],
+                       reports: list[DeleteReport]) -> None:
+        # Only drop paths safe_delete actually TRASHED - skipped (hard-protected,
+        # running app, vanished) and failed items must stay listed and
+        # re-selectable, matching what ReportView reports.
+        trashed_paths = {r.path for report in reports for r in report.trashed}
         for key in picked:
             sel = self.query_one(f"#list-{key}", SelectionList)
             keep = {i: it for i, it in self.items[key].items()
