@@ -5,7 +5,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from scanner.system_data import scan_all, scan_space_finder
-from ui.screens._util import run_offthread
+from ui.screens._util import run_offthread, skip_resume_rescan
 from utils.helpers import format_size, get_disk_usage
 
 AREAS = [
@@ -34,6 +34,14 @@ class DashboardScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        table.add_columns("Key", "Area", "Levels")
+        for key, label, _, levels in AREAS:
+            table.add_row(key, label, levels)
+        self._scanning = False
+        self._refresh_disk()
+
+    def _refresh_disk(self) -> None:
         usage = get_disk_usage()
         if not usage:
             self.query_one("#disk", Static).update("Disk: unavailable")
@@ -44,11 +52,14 @@ class DashboardScreen(Screen):
             self.query_one("#disk", Static).update(
                 f"Disk: {format_size(free)} free of "
                 f"{format_size(total)} ({percent:.0f}% used)")
-        table = self.query_one(DataTable)
-        table.add_columns("Key", "Area", "Levels")
-        for key, label, _, levels in AREAS:
-            table.add_row(key, label, levels)
-        self._scanning = False
+
+    def on_screen_resume(self) -> None:
+        # Disk line only - re-running the (potentially slow) Quick Scan on
+        # every return to the dashboard would be surprising; that stays
+        # explicit via the "s" binding.
+        if skip_resume_rescan(self) or self._scanning:
+            return
+        self._refresh_disk()
 
     def action_goto(self, screen: str) -> None:
         self.app.push_screen(screen)

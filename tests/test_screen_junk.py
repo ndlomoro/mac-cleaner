@@ -3,6 +3,7 @@ import time
 from textual.app import App
 
 from scanner.system_data import ScanResult
+from ui.app import CleanerApp
 from ui.screens.junk import JunkScreen
 
 
@@ -117,3 +118,26 @@ async def test_double_press_does_not_double_clean(tmp_path, monkeypatch, fake_tr
         await pilot.pause()
         await pilot.pause()
     assert len(calls) == 1
+
+
+async def test_revisiting_junk_screen_rescans(monkeypatch):
+    """Screen-resume rescans: returning to Junk from the dashboard must
+    re-run scan_all so counts reflect any cleaning done elsewhere. Textual
+    fires on_screen_resume once right after the initial on_mount too - that
+    first resume must be swallowed so a fresh push still scans exactly once."""
+    calls = []
+
+    def _counting_scan_all():
+        calls.append(1)
+        return []
+
+    monkeypatch.setattr("ui.screens.junk.scan_all", _counting_scan_all)
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.press("1")       # dashboard -> Junk: initial mount scan
+        await pilot.pause()
+        await pilot.press("escape")  # Junk -> dashboard
+        await pilot.pause()
+        await pilot.press("1")       # dashboard -> Junk again: resume rescan
+        await pilot.pause()
+    assert calls == [1, 1]

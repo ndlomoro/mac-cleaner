@@ -15,7 +15,7 @@ from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
 from scanner.duplicates import find_duplicates
 from scanner.large_files import find_large_files
 from scanner.system_data import scan_space_finder
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_offthread, skip_resume_rescan
 from ui.widgets.gates import ConfirmModal, TypedGateModal
 from ui.widgets.report_view import ReportView
 from utils.helpers import format_size
@@ -40,10 +40,24 @@ class SpaceFinderScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._scanning = False
+        self._rescan()
+
+    def _rescan(self) -> None:
         # per-category: option index -> item dict; duplicates items carry "group"
         self.items: dict[str, dict[int, dict]] = {k: {} for k in TABS}
+        for key in TABS:
+            self.query_one(f"#list-{key}", SelectionList).clear_options()
+        self.query_one("#sel-total", Static).update("Nothing selected.")
+        self.query_one(ReportView).update("")
         self.sub_title = "Space Finder - scanning…"
+        self._scanning = True
         self.run_worker(self._scan, thread=True)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._scanning:
+            return
+        self._rescan()
 
     # ---------- scanning ----------
 
@@ -63,8 +77,11 @@ class SpaceFinderScreen(Screen):
             self.app.call_from_thread(self._fill, "duplicates", dups)
             self.app.call_from_thread(self._scan_done)
         except Exception as e:  # noqa: BLE001 - boundary: never let a raise kill the app
-            self.app.call_from_thread(
-                self.notify, f"Scan failed: {e}", severity="error")
+            self.app.call_from_thread(self._scan_error, e)
+
+    def _scan_error(self, e: Exception) -> None:
+        self._scanning = False
+        self.notify(f"Scan failed: {e}", severity="error")
 
     def _fill(self, category: str, rows: list[dict]) -> None:
         sel = self.query_one(f"#list-{category}", SelectionList)
@@ -80,6 +97,7 @@ class SpaceFinderScreen(Screen):
             sel.highlighted = 0
 
     def _scan_done(self) -> None:
+        self._scanning = False
         self.sub_title = "Space Finder"
 
     # ---------- Keep-One Invariant / footer total ----------
@@ -174,7 +192,8 @@ class SpaceFinderScreen(Screen):
 
             run_offthread(self, _work, _done, _error)
 
-        self.app.push_screen(
+        push_modal(
+            self,
             ConfirmModal(f"Move {count} item(s) (~{format_size(total)}) to Trash?"),
             _resolved,
         )
@@ -217,7 +236,8 @@ class SpaceFinderScreen(Screen):
             else:
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
-        self.app.push_screen(
+        push_modal(
+            self,
             TypedGateModal(f"Permanently delete these items to reclaim "
                            f"~{format_size(total)}"),
             _resolved,

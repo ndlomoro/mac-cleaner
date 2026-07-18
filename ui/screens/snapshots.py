@@ -6,7 +6,7 @@ from textual.widgets import Footer, Header, Static
 
 from cleaner.snapshots import clean_snapshots
 from scanner.snapshots import list_snapshots
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_offthread, skip_resume_rescan
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
 from utils.helpers import format_size
@@ -27,9 +27,18 @@ class SnapshotsScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.snapshots = []
         self._busy = False
+        self._rescan()
+
+    def _rescan(self) -> None:
+        self.snapshots = []
+        self.query_one("#snap-list", Static).update("Scanning…")
         run_offthread(self, list_snapshots, self._show, self._load_error)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._busy:
+            return
+        self._rescan()
 
     def _load_error(self, exc: Exception) -> None:
         self.notify(f"Failed to list snapshots: {exc}", severity="error")
@@ -55,7 +64,8 @@ class SnapshotsScreen(Screen):
             run_offthread(self, lambda: clean_snapshots(dry_run=False),
                           self._report, self._delete_error)
 
-        self.app.push_screen(
+        push_modal(
+            self,
             TypedGateModal(f"Deleting {len(self.snapshots)} snapshot(s)"),
             _resolved,
         )
@@ -75,4 +85,4 @@ class SnapshotsScreen(Screen):
             self.notify(
                 "sudo needs authorization - run 'sudo -v' in a terminal, then retry.",
                 severity="warning")
-        run_offthread(self, list_snapshots, self._show, self._load_error)
+        self._rescan()

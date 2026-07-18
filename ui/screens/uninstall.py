@@ -5,7 +5,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from cleaner.app_remnants import uninstall_app
 from scanner.app_remnants import get_installed_apps
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_offthread, skip_resume_rescan
 from ui.widgets.gates import ConfirmModal
 from ui.widgets.report_view import ReportView, render_paths
 from utils.helpers import format_size
@@ -22,11 +22,22 @@ class UninstallScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.apps = []
         self._busy = False
         table = self.query_one(DataTable)
         table.add_columns("App", "Size")
+        self._rescan()
+
+    def _rescan(self) -> None:
+        self.apps = []
+        self.query_one(DataTable).clear()
+        self.query_one("#preview", Static).update("")
+        self.query_one(ReportView).update("")
         run_offthread(self, get_installed_apps, self._fill, self._load_error)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._busy:
+            return
+        self._rescan()
 
     def _load_error(self, exc: Exception) -> None:
         self.notify(f"Failed to list apps: {exc}", severity="error")
@@ -76,7 +87,8 @@ class UninstallScreen(Screen):
 
                 run_offthread(self, _real_work, _real_done, _real_error)
 
-            self.app.push_screen(
+            push_modal(
+                self,
                 ConfirmModal(f"Uninstall {name} ({count} item(s), "
                              f"~{format_size(total)}) and Trash its leftovers?"),
                 _resolved,

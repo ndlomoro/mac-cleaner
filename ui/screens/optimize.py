@@ -7,7 +7,7 @@ from textual.widgets import Footer, Header, Static
 from cleaner.optimization import DERIVED_DATA, PIP_CACHE, PODS_CACHE, optimize_mac
 from core.deleter import DeleteReport
 from scanner.optimization import check_launch_agents
-from ui.screens._util import run_offthread
+from ui.screens._util import run_offthread, skip_resume_rescan
 from ui.widgets.category_header import CategoryHeader, header_markup
 from ui.widgets.report_view import render_report
 
@@ -32,6 +32,9 @@ class OptimizeScreen(Screen):
     def on_mount(self) -> None:
         self._optimizing = False
         self._preview_shown = False
+        self._rescan()
+
+    def _rescan(self) -> None:
         self.query_one("#agents", Static).update("Scanning…")
 
         def _work():
@@ -49,6 +52,11 @@ class OptimizeScreen(Screen):
             self.notify(f"Failed to list launch agents: {e}", severity="error")
 
         run_offthread(self, _work, _done, _error)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._optimizing:
+            return
+        self._rescan()
 
     def action_toggle_preview(self) -> None:
         preview = self.query_one("#preview", Static)

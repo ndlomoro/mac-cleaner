@@ -7,7 +7,7 @@ from textual.widgets import Footer, Header, Static
 from cleaner.system_data import clean_files
 from core.deleter import DeleteReport, ReclaimReport, reclaim
 from scanner.system_data import scan_all
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_offthread, skip_resume_rescan
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
 from ui.widgets.report_view import ReportView, render_paths
@@ -30,11 +30,22 @@ class JunkScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.results = {}
         self._cleaning = False
+        self._rescan()
+
+    def _rescan(self) -> None:
+        self.results = {}
         self._preview_shown = False
+        self.query_one("#junk-body").remove_children()
+        self.query_one("#preview", Static).update("")
+        self.query_one(ReportView).update("")
         self.sub_title = "System Data (Junk) - scanning…"
         self.run_worker(self._scan, thread=True)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._cleaning:
+            return
+        self._rescan()
 
     def action_toggle_preview(self) -> None:
         preview = self.query_one("#preview", Static)
@@ -117,7 +128,8 @@ class JunkScreen(Screen):
             else:
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
-        self.app.push_screen(
+        push_modal(
+            self,
             TypedGateModal(f"Permanently delete these items to reclaim "
                            f"~{format_size(total)}"),
             _resolved,

@@ -37,6 +37,27 @@ async def test_dashboard_survives_disk_stat_failure(monkeypatch):
         assert "unavailable" in str(app.screen.query_one("#disk").content)
 
 
+async def test_disk_line_refreshes_on_resume(monkeypatch):
+    """Screen-resume rescans: the dashboard's disk line must refresh when the
+    user returns from a sub-screen (e.g. after cleaning elsewhere frees space)
+    without re-running the explicit Quick Scan action."""
+    calls = []
+
+    def _counting_disk_usage():
+        calls.append(1)
+        return {"total": 1000, "used": 400, "free": 600, "percent": 40}
+
+    monkeypatch.setattr("ui.screens.dashboard.get_disk_usage", _counting_disk_usage)
+    monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [])
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.press("1")       # dashboard -> Junk
+        await pilot.pause()
+        await pilot.press("escape")  # Junk -> dashboard: resume refresh
+        await pilot.pause()
+    assert len(calls) >= 2
+
+
 async def test_quick_scan_summarizes(monkeypatch, tmp_path):
     from scanner.system_data import ScanResult
     monkeypatch.setattr("ui.screens.dashboard.get_disk_usage",
