@@ -1,10 +1,11 @@
 from textual.app import App
-from textual.widgets import SelectionList
+from textual.widgets import SelectionList, Static
 
 from scanner.large_files import LargeFile
 from scanner.system_data import ScanResult
 from ui.screens.space_finder import SpaceFinderScreen
 from ui.widgets.gates import ConfirmModal
+from utils.helpers import format_size
 
 
 class Host(App):
@@ -125,6 +126,30 @@ async def test_skipped_items_stay_listed(tmp_path, monkeypatch, fake_trash):
         remaining = {it["path"] for it in host.screen.items["downloads"].values()}
         assert str(hard) in remaining          # skipped item still listed
         assert str(good) not in remaining      # trashed item removed
+
+
+async def test_selected_total_footer_updates_and_resets(tmp_path, monkeypatch, fake_trash):
+    f = _patch_scanners(monkeypatch, tmp_path)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        footer = host.screen.query_one("#sel-total", Static)
+        assert "Nothing selected" in footer.content
+
+        dl_list = host.screen.query_one("#list-downloads", SelectionList)
+        dl_list.focus()
+        await pilot.press("space")     # select the only row (size=10)
+        await pilot.pause()
+        assert "1 item" in footer.content
+        assert format_size(10) in footer.content
+
+        await pilot.press("t")         # Move to Trash -> ConfirmModal
+        await pilot.pause()
+        await pilot.click("#confirm")
+        await pilot.pause()
+        assert not f.exists()
+        # selections were cleared by the trash pass - footer resets
+        assert "Nothing selected" in footer.content
 
 
 async def test_keep_one_invariant(tmp_path, monkeypatch, fake_trash):

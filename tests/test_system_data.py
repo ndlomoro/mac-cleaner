@@ -63,6 +63,14 @@ def test_clean_system_data_returns_reports_by_category(monkeypatch, tmp_path):
     assert isinstance(result["caches"], DeleteReport)
 
 
+def test_var_folders_excluded_from_bulk_junk():
+    # Decided 2026-07-18: a SAFE-badged bulk clean must not offer live
+    # per-user temp roots. /private/var/folders must never be scanned by
+    # the Junk (bulk-clean) paths.
+    assert Path("/private/var/folders") not in scanner.system_data.CACHE_DIRS
+    assert Path("/private/var/folders") not in scanner.system_data.TEMP_SCAN_DIRS
+
+
 def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
     # scan_all must never return user-data categories.
     # Uses isolated tmp dirs instead of real filesystem roots: an unmocked

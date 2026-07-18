@@ -6,7 +6,9 @@ and the Duplicates tab enforces the Keep-One Invariant.
 """
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Footer, Header, SelectionList, TabbedContent, TabPane
+from textual.widgets import (
+    Footer, Header, SelectionList, Static, TabbedContent, TabPane,
+)
 from textual.widgets.selection_list import Selection
 
 from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
@@ -33,6 +35,7 @@ class SpaceFinderScreen(Screen):
             for key in TABS:
                 with TabPane(key.replace("_", " ").title(), id=f"tab-{key}"):
                     yield SelectionList(id=f"list-{key}")
+        yield Static("Nothing selected.", id="sel-total")
         yield ReportView(id="report")
         yield Footer()
 
@@ -79,27 +82,43 @@ class SpaceFinderScreen(Screen):
     def _scan_done(self) -> None:
         self.sub_title = "Space Finder"
 
-    # ---------- Keep-One Invariant ----------
+    # ---------- Keep-One Invariant / footer total ----------
 
     def on_selection_list_selected_changed(
         self, event: SelectionList.SelectedChanged
     ) -> None:
         sel = event.selection_list
-        if sel.id != "list-duplicates":
-            return
-        items = self.items["duplicates"]
-        selected = set(sel.selected)
-        by_group: dict[str, list[int]] = {}
-        for i in selected:
-            by_group.setdefault(items[i]["group"], []).append(i)
-        for group_hash, chosen in by_group.items():
-            group_size = sum(1 for it in items.values()
-                            if it["group"] == group_hash)
-            if len(chosen) >= group_size:
-                # refuse: deselect the highest-indexed pick and warn
-                sel.deselect(sorted(chosen)[-1])
-                self.notify("One copy of each duplicate is always kept.",
-                            severity="warning")
+        if sel.id == "list-duplicates":
+            items = self.items["duplicates"]
+            selected = set(sel.selected)
+            by_group: dict[str, list[int]] = {}
+            for i in selected:
+                by_group.setdefault(items[i]["group"], []).append(i)
+            for group_hash, chosen in by_group.items():
+                group_size = sum(1 for it in items.values()
+                                if it["group"] == group_hash)
+                if len(chosen) >= group_size:
+                    # refuse: deselect the highest-indexed pick and warn
+                    sel.deselect(sorted(chosen)[-1])
+                    self.notify("One copy of each duplicate is always kept.",
+                                severity="warning")
+        self._update_selected_total()
+
+    def _update_selected_total(self) -> None:
+        """Recompute the selected-count/size footer across ALL tabs."""
+        count = 0
+        total = 0
+        for key in TABS:
+            sel = self.query_one(f"#list-{key}", SelectionList)
+            for i in sel.selected:
+                item = self.items[key][i]
+                count += 1
+                total += item["size"]
+        static = self.query_one("#sel-total", Static)
+        if count == 0:
+            static.update("Nothing selected.")
+        else:
+            static.update(f"Selected: {count} item(s) (~{format_size(total)})")
 
     # ---------- trashing ----------
 
@@ -173,6 +192,9 @@ class SpaceFinderScreen(Screen):
             sel.clear_options()
             self.items[key] = {}
             self._fill(key, list(keep.values()))
+        # clear_options()/add_option() don't fire SelectedChanged; the
+        # refreshed lists start with nothing selected, so reset explicitly.
+        self._update_selected_total()
 
     # ---------- reclaim (parity with Junk screen) ----------
 

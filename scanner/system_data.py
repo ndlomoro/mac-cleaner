@@ -7,15 +7,20 @@ from typing import Optional
 from utils.helpers import HOME, get_dir_size, file_age_days
 
 # Safe cache directories to scan
+# /private/var/folders is deliberately excluded: those top-level dirs are
+# live per-user temp roots of running apps, managed by macOS itself. A
+# SAFE-badged bulk clean must not offer live per-user temp roots
+# (decided 2026-07-18).
 CACHE_DIRS = [
     HOME / "Library" / "Caches",
-    Path("/private/var/folders"),
     Path("/tmp"),
     HOME / "tmp",
 ]
 
-# Dirs cheap enough to walk exhaustively for temp-file patterns
-TEMP_SCAN_DIRS = [d for d in CACHE_DIRS if d != Path("/private/var/folders")]
+# Dirs cheap enough to walk exhaustively for temp-file patterns.
+# Kept as its own name (rather than using CACHE_DIRS directly) because
+# tests monkeypatch TEMP_SCAN_DIRS independently of CACHE_DIRS.
+TEMP_SCAN_DIRS = list(CACHE_DIRS)
 
 # Safe log directories to scan
 LOG_DIRS = [

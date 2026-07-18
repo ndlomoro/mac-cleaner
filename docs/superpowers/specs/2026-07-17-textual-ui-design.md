@@ -41,7 +41,7 @@ ui/
 
 ## Flows and selection semantics
 
-- **Junk screen:** tree of caches/logs/temp, pre-selectable (SAFE junk). Dry Run / Clean → `report_view` → if trashed > 0, "Empty now to reclaim ~X?" mounts **TypedGateModal**.
+- **Junk screen:** streaming list of caches/logs/temp (SAFE junk). Phase 2 ships all-or-nothing Dry Run / Clean (per-category selection de-scoped to phase 3, decided 2026-07-18) → `report_view` → if trashed > 0, "Empty now to reclaim ~X?" mounts **TypedGateModal**.
 - **Space Finder:** nothing pre-selected; the widget offers **no select-all** (structural enforcement of the user_data rule). Rows show size + age-as-signal. Check → footer total → Move to Trash → **ConfirmModal** (count + ~size) → `safe_delete(..., user_selected=True)` — genuinely true, paths come from checkbox state.
 - **Duplicates:** new registry category `duplicates` (RISKY, user_data=True). Rows grouped by content hash; the UI enforces the **Keep-One Invariant** — at least one copy per group can never be selected.
 - **Privacy/Optimize/Snapshots/Uninstall:** same widgets recombined; external-tool categories carry the passive "not recoverable via Trash" label; recents and snapshots mount TypedGateModal.
@@ -61,7 +61,7 @@ Phase 1's tier-2 protection made `~/Documents`, `~/Desktop`, `~/Pictures` absolu
 ## Perf debt (lands first)
 
 - `scan_temp_files` collapses seven per-pattern `rglob` walks into one walk matching all patterns.
-- `/private/var/folders` scanned shallowly (depth-capped, lazy sizing).
+- `/private/var/folders` is EXCLUDED from Junk entirely (decided 2026-07-18, replacing the earlier "scan shallowly" idea): its top-level dirs are live per-user temp roots of running apps — macOS manages that tree; a SAFE-badged bulk clean must not offer it.
 - Remaining latency surfaces as streaming progress, never a frozen screen.
 
 ## Hygiene bundle (from phase-1 final review)
