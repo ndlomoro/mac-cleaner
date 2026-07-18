@@ -76,6 +76,9 @@ def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
     log_dir.mkdir()
     (log_dir / "app.log").write_bytes(b"y")
     monkeypatch.setattr("scanner.system_data.HOME", tmp_path)
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    (downloads / "bait.dmg").write_bytes(b"x")
     monkeypatch.setattr("scanner.system_data.CACHE_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.TEMP_SCAN_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.LOG_DIRS", [log_dir])

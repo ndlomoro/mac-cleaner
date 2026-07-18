@@ -4,7 +4,7 @@ import scanner.app_remnants
 import cleaner.app_remnants
 import core.deleter as deleter_mod
 from core.deleter import DeleteReport
-from scanner.app_remnants import find_leftovers, get_installed_apps
+from scanner.app_remnants import find_leftovers
 from cleaner.app_remnants import clean_leftovers, uninstall_app
 
 def test_find_leftovers(tmp_path, monkeypatch):
