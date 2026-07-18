@@ -23,6 +23,14 @@ _Avoid_: system files, cleanup
 The browse-and-pick area for Reclaimable User Data: old downloads, iOS backups, large files, duplicates. Age is a signal shown to the user, never an eligibility filter.
 _Avoid_: smart scan
 
+**Hard-Protected**:
+Paths the app can never delete under any circumstances: keychains, mail stores, SSH/GPG keys, Photos libraries, iCloud Drive, the Trash itself, and all system paths.
+_Avoid_: blacklisted, forbidden
+
+**Soft-Protected**:
+User-content folders (Documents, Desktop, Pictures) that bulk cleaning can never touch, but an individually picked and confirmed selection can send to the Trash.
+_Avoid_: semi-protected
+
 **Keep-One Invariant**:
 In any group of duplicate files, at least one copy can never be selected for removal. Enforced by the interface, not left to the user's care.
 

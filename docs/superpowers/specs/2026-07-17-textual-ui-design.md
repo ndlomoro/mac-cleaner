@@ -30,8 +30,9 @@ ui/
 │   ├── category_header.py  # [LEVEL] badge + explanation (reads core.registry)
 │   ├── report_view.py      # sole renderer for DeleteReport / ReclaimReport
 │   └── gates.py            # ConfirmModal (y/N) + TypedGateModal (literal "yes") — the only gate implementations
-└── workers.py        # blocking scans/cleans in thread-workers, streaming partial results as messages
 ```
+
+(Streaming is per-screen: each screen runs its blocking scan in a Textual thread-worker and updates via `call_from_thread` — no separate workers module needed.)
 
 **Contracts:**
 - `main.py` becomes an entry point that launches `CleanerApp`. The menu loop is deleted (git history keeps it).
@@ -45,6 +46,15 @@ ui/
 - **Duplicates:** new registry category `duplicates` (RISKY, user_data=True). Rows grouped by content hash; the UI enforces the **Keep-One Invariant** — at least one copy per group can never be selected.
 - **Privacy/Optimize/Snapshots/Uninstall:** same widgets recombined; external-tool categories carry the passive "not recoverable via Trash" label; recents and snapshots mount TypedGateModal.
 - **Gate rules:** ConfirmModal for trashing user_data selections; TypedGateModal for anything `irreversible` plus the reclaim/empty step. Dry runs never gate.
+
+## Protection semantics amendment (approved during phase-2 design)
+
+Phase 1's tier-2 protection made `~/Documents`, `~/Desktop`, `~/Pictures` absolutely undeletable — which would let Space Finder show, pick, and confirm a large file there and then refuse it. Tier 2 splits:
+
+- **Soft-Protected** (`~/Documents`, `~/Desktop`, `~/Pictures`): immune to bulk/Junk cleaning exactly as before, but deletable through a `user_selected` pick flow (Trash-recoverable + confirmed).
+- **Hard-Protected** (Keychains, Mail, `.ssh`, `.gnupg`, `*.photoslibrary`, iCloud Drive, the Trash, all system tiers): never deletable, picked or not.
+
+`is_protected` gains an `allow_user_content` flag; `safe_delete` passes it only when the category is `user_data` AND `user_selected=True`.
 
 ## Perf debt (lands first)
 
