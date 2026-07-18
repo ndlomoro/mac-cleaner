@@ -70,6 +70,17 @@ _CATEGORIES = [
     Category("duplicates", Level.RISKY,
              "Extra copies of identical files. One copy of each is always kept - you choose which copies go.",
              user_data=True),
+    Category("project_artifacts", Level.CAUTION,
+             "Build artifacts and dependency folders (node_modules, venvs, target). "
+             "Regenerable with one install command - but the project is broken until you run it.",
+             user_data=True),
+    Category("docker_junk", Level.RISKY,
+             "Docker images, build cache and (only if you explicitly include them) volumes. "
+             "Pruned by Docker itself - cannot be undone.",
+             via_trash=False),
+    Category("ios_simulators", Level.RISKY,
+             "Unavailable iOS Simulator runtimes and devices. Deleted by Xcode's simctl - cannot be undone.",
+             via_trash=False),
     Category("recents", Level.RISKY,
              "The list of recently opened files; clearing rewrites it in place and cannot be undone.",
              via_trash=False),

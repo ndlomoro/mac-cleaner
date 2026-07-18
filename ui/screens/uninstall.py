@@ -5,7 +5,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from cleaner.app_remnants import uninstall_app
 from scanner.app_remnants import get_installed_apps
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_gated, run_offthread, skip_resume_rescan
 from ui.widgets.gates import ConfirmModal
 from ui.widgets.report_view import ReportView, render_paths
 from utils.helpers import format_size
@@ -22,11 +22,23 @@ class UninstallScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.apps = []
         self._busy = False
+        self._scanning = False
         table = self.query_one(DataTable)
         table.add_columns("App", "Size")
-        run_offthread(self, get_installed_apps, self._fill, self._load_error)
+        self._rescan()
+
+    def _rescan(self) -> None:
+        self.apps = []
+        self.query_one(DataTable).clear()
+        self.query_one("#preview", Static).update("")
+        self.query_one(ReportView).update("")
+        run_gated(self, "_scanning", get_installed_apps, self._fill, self._load_error)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._busy or self._scanning:
+            return
+        self._rescan()
 
     def _load_error(self, exc: Exception) -> None:
         self.notify(f"Failed to list apps: {exc}", severity="error")
@@ -38,6 +50,12 @@ class UninstallScreen(Screen):
             table.add_row(app_info["name"], format_size(app_info["size"]))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # _busy spans dry-run -> ConfirmModal -> real uninstall worker. Set
+        # here, before the dry-run work even starts, so it already covers
+        # the window before the ConfirmModal exists. The dry-run's error
+        # branch and the ConfirmModal-declined branch clear it directly
+        # (both end the flow); the real-uninstall worker is the true
+        # terminal step and uses run_gated.
         if self._busy:
             return
         app_info = self.apps[event.cursor_row]
@@ -66,17 +84,16 @@ class UninstallScreen(Screen):
                     return uninstall_app(name, dry_run=False)
 
                 def _real_done(result: dict) -> None:
-                    self._busy = False
                     self.query_one(ReportView).show(
                         [result["app"], result["leftovers"]])
 
                 def _real_error(exc: Exception) -> None:
-                    self._busy = False
                     self.notify(str(exc), severity="error")
 
-                run_offthread(self, _real_work, _real_done, _real_error)
+                run_gated(self, "_busy", _real_work, _real_done, _real_error)
 
-            self.app.push_screen(
+            push_modal(
+                self,
                 ConfirmModal(f"Uninstall {name} ({count} item(s), "
                              f"~{format_size(total)}) and Trash its leftovers?"),
                 _resolved,

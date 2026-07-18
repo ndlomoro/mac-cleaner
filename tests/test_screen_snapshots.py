@@ -52,3 +52,19 @@ async def test_snapshot_zero_delta_shows_unknown(monkeypatch):
         await pilot.pause()
         text = str(host.screen.query_one("#snap-log").content)
         assert "unknown" in text.lower()
+
+
+async def test_load_error_clears_scanning_placeholder(monkeypatch):
+    # Reviewer repro: a failed initial scan left "#snap-list" stuck on
+    # "Scanning…" forever - the error notify fired, but nothing ever
+    # replaced the placeholder text on the Static itself.
+    def _boom():
+        raise RuntimeError("disk_util unavailable")
+
+    monkeypatch.setattr("ui.screens.snapshots.list_snapshots", _boom)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        text = str(host.screen.query_one("#snap-list").content)
+        assert text == "Could not list snapshots."
+        assert "Scanning" not in text

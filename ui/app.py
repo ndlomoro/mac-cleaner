@@ -2,6 +2,7 @@
 from textual.app import App
 
 from ui.screens.dashboard import DashboardScreen
+from ui.screens.dev_junk import DevJunkScreen
 from ui.screens.junk import JunkScreen
 from ui.screens.optimize import OptimizeScreen
 from ui.screens.privacy import PrivacyScreen
@@ -20,6 +21,7 @@ class CleanerApp(App):
         "optimize": OptimizeScreen,
         "snapshots": SnapshotsScreen,
         "uninstall": UninstallScreen,
+        "dev_junk": DevJunkScreen,
     }
 
     def on_mount(self) -> None:

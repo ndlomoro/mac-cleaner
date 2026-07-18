@@ -1,11 +1,14 @@
 """Dashboard - disk usage + feature areas. Number keys navigate."""
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
+from scanner.dev_junk import find_project_artifacts
 from scanner.system_data import scan_all, scan_space_finder
-from ui.screens._util import run_offthread
+from ui.screens._util import run_offthread, skip_resume_rescan
 from utils.helpers import format_size, get_disk_usage
 
 AREAS = [
@@ -15,6 +18,7 @@ AREAS = [
     ("4", "Optimize", "optimize", "SAFE"),
     ("5", "Snapshots", "snapshots", "RISKY"),
     ("6", "Uninstall Apps", "uninstall", "CAUTION"),
+    ("7", "Dev Junk", "dev_junk", "CAUTION/RISKY"),
 ]
 
 
@@ -34,6 +38,14 @@ class DashboardScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        table.add_columns("Key", "Area", "Levels")
+        for key, label, _, levels in AREAS:
+            table.add_row(key, label, levels)
+        self._scanning = False
+        self._refresh_disk()
+
+    def _refresh_disk(self) -> None:
         usage = get_disk_usage()
         if not usage:
             self.query_one("#disk", Static).update("Disk: unavailable")
@@ -44,11 +56,14 @@ class DashboardScreen(Screen):
             self.query_one("#disk", Static).update(
                 f"Disk: {format_size(free)} free of "
                 f"{format_size(total)} ({percent:.0f}% used)")
-        table = self.query_one(DataTable)
-        table.add_columns("Key", "Area", "Levels")
-        for key, label, _, levels in AREAS:
-            table.add_row(key, label, levels)
-        self._scanning = False
+
+    def on_screen_resume(self) -> None:
+        # Disk line only - re-running the (potentially slow) Quick Scan on
+        # every return to the dashboard would be surprising; that stays
+        # explicit via the "s" binding.
+        if skip_resume_rescan(self) or self._scanning:
+            return
+        self._refresh_disk()
 
     def action_goto(self, screen: str) -> None:
         self.app.push_screen(screen)
@@ -61,16 +76,29 @@ class DashboardScreen(Screen):
         self.query_one("#summary", Static).update("Scanning…")
 
         def _work():
-            return scan_all() + scan_space_finder()
+            return scan_all() + scan_space_finder(), find_project_artifacts()
 
-        def _done(results) -> None:
+        def _done(result) -> None:
             self._scanning = False
+            results, artifacts = result
             lines = [
                 f"{r.name}: {r.file_count} items (~{r.human_size})"
                 for r in results if r.file_count > 0
             ]
+            if artifacts:
+                total = sum(a["size"] for a in artifacts)
+                # Distinct parent dirs, not project names - two projects that
+                # happen to share a basename (e.g. two different "api"
+                # checkouts) must count separately; gradle_cache/maven_repo
+                # are shared cache pseudo-rows, not projects, so excluded.
+                n_projects = len({
+                    str(Path(a["path"]).parent) for a in artifacts
+                    if a["kind"] not in ("gradle_cache", "maven_repo")
+                })
+                lines.append(
+                    f"Dev junk: ~{format_size(total)} across {n_projects} projects")
             if lines:
-                lines.append("[dim]Open an area (1-6) to review and clean.[/dim]")
+                lines.append("[dim]Open an area (1-7) to review and clean.[/dim]")
                 text = "\n".join(lines)
             else:
                 text = "Nothing found - looking clean."

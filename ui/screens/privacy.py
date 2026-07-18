@@ -8,7 +8,7 @@ from cleaner.privacy import clean_privacy, clear_recently_used
 # Filters mirror cleaner/privacy.py::clean_browser_data / clean_tracking_data -
 # the preview must show exactly what those cleaners will act on.
 from scanner.privacy import scan_browser_data, scan_tracking_data
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_offthread
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
 from ui.widgets.report_view import ReportView, render_paths
@@ -109,5 +109,4 @@ class PrivacyScreen(Screen):
 
             run_offthread(self, _work, _done, _error)
 
-        self.app.push_screen(
-            TypedGateModal("Clearing the recently-used list"), _resolved)
+        push_modal(self, TypedGateModal("Clearing the recently-used list"), _resolved)

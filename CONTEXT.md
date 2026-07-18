@@ -38,6 +38,10 @@ In any group of duplicate files, at least one copy can never be selected for rem
 How loudly the app warns about a category: SAFE, CAUTION, or RISKY. Describes the consequence of deletion; it does not by itself permit or forbid anything.
 _Avoid_: severity, risk score
 
+**Stale**:
+A project whose newest source-file change is long past. Staleness is measured on the project, never on its build artifacts (reinstalling dependencies does not make a dead project active). A signal shown to the user, never an eligibility filter.
+_Avoid_: old, unused
+
 **Trashed**:
 Sent to the macOS Trash: recoverable, and not yet free disk space. The app never reports Trashed bytes as freed.
 _Avoid_: deleted, freed, cleaned

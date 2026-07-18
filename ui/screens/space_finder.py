@@ -11,11 +11,12 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
+from cleaner.large_files import clean_large_files
 from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
 from scanner.duplicates import find_duplicates
 from scanner.large_files import find_large_files
 from scanner.system_data import scan_space_finder
-from ui.screens._util import run_offthread
+from ui.screens._util import push_modal, run_gated, run_offthread, skip_resume_rescan
 from ui.widgets.gates import ConfirmModal, TypedGateModal
 from ui.widgets.report_view import ReportView
 from utils.helpers import format_size
@@ -40,10 +41,25 @@ class SpaceFinderScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._scanning = False
+        self._trashing = False
+        self._rescan()
+
+    def _rescan(self) -> None:
         # per-category: option index -> item dict; duplicates items carry "group"
         self.items: dict[str, dict[int, dict]] = {k: {} for k in TABS}
+        for key in TABS:
+            self.query_one(f"#list-{key}", SelectionList).clear_options()
+        self.query_one("#sel-total", Static).update("Nothing selected.")
+        self.query_one(ReportView).update("")
         self.sub_title = "Space Finder - scanning…"
+        self._scanning = True
         self.run_worker(self._scan, thread=True)
+
+    def on_screen_resume(self) -> None:
+        if skip_resume_rescan(self) or self._scanning or self._trashing:
+            return
+        self._rescan()
 
     # ---------- scanning ----------
 
@@ -63,8 +79,11 @@ class SpaceFinderScreen(Screen):
             self.app.call_from_thread(self._fill, "duplicates", dups)
             self.app.call_from_thread(self._scan_done)
         except Exception as e:  # noqa: BLE001 - boundary: never let a raise kill the app
-            self.app.call_from_thread(
-                self.notify, f"Scan failed: {e}", severity="error")
+            self.app.call_from_thread(self._scan_error, e)
+
+    def _scan_error(self, e: Exception) -> None:
+        self._scanning = False
+        self.notify(f"Scan failed: {e}", severity="error")
 
     def _fill(self, category: str, rows: list[dict]) -> None:
         sel = self.query_one(f"#list-{category}", SelectionList)
@@ -80,6 +99,7 @@ class SpaceFinderScreen(Screen):
             sel.highlighted = 0
 
     def _scan_done(self) -> None:
+        self._scanning = False
         self.sub_title = "Space Finder"
 
     # ---------- Keep-One Invariant / footer total ----------
@@ -123,6 +143,18 @@ class SpaceFinderScreen(Screen):
     # ---------- trashing ----------
 
     def action_trash_selected(self) -> None:
+        # _trashing spans ConfirmModal -> trash worker -> (if anything was
+        # trashed) reclaim gate -> reclaim worker/decline. It's set here,
+        # before the ConfirmModal is even pushed, and only cleared in a
+        # branch that truly ends the flow: the "nothing selected"/refused
+        # early-returns below never set it in the first place; the
+        # ConfirmModal-declined branch and the trash worker's error branch
+        # clear it directly; the trash-done branch clears it only when no
+        # reclaim is offered, otherwise handing the flag off to
+        # _offer_reclaim exactly like Junk's chain.
+        if self._trashing:
+            self.notify("Already trashing…")
+            return
         picked: dict[str, list[dict]] = {}
         for key in TABS:
             sel = self.query_one(f"#list-{key}", SelectionList)
@@ -151,30 +183,41 @@ class SpaceFinderScreen(Screen):
 
         count = sum(len(v) for v in picked.values())
         total = sum(f["size"] for v in picked.values() for f in v)
+        self._trashing = True
 
         def _resolved(confirmed: bool | None) -> None:
             if not confirmed:
+                self._trashing = False
                 self.notify("Cancelled - nothing was touched.")
                 return
 
             def _work() -> list[DeleteReport]:
-                return [
-                    safe_delete(rows, category, dry_run=False, user_selected=True)
-                    for category, rows in picked.items()
-                ]
+                reports = []
+                for category, rows in picked.items():
+                    if category == "large_files":
+                        reports.append(clean_large_files(
+                            [r["path"] for r in rows], dry_run=False))
+                    else:
+                        reports.append(safe_delete(
+                            rows, category, dry_run=False, user_selected=True))
+                return reports
 
             def _done(reports: list[DeleteReport]) -> None:
                 self.query_one(ReportView).show(reports)
                 self._refresh_lists(picked, reports)
                 if any(r.trashed for r in reports):
-                    self._offer_reclaim(reports)
+                    self._offer_reclaim(reports)  # _trashing stays True - see _offer_reclaim
+                else:
+                    self._trashing = False
 
             def _error(exc: Exception) -> None:
+                self._trashing = False
                 self.notify(f"Trash failed: {exc}", severity="error")
 
             run_offthread(self, _work, _done, _error)
 
-        self.app.push_screen(
+        push_modal(
+            self,
             ConfirmModal(f"Move {count} item(s) (~{format_size(total)}) to Trash?"),
             _resolved,
         )
@@ -199,6 +242,12 @@ class SpaceFinderScreen(Screen):
     # ---------- reclaim (parity with Junk screen) ----------
 
     def _offer_reclaim(self, reports: list[DeleteReport]) -> None:
+        # Entered with self._trashing already True (see action_trash_selected).
+        # This is the last leg of the trash/reclaim chain: the declined
+        # branch clears it manually (no further async step), and the
+        # confirmed branch's reclaim worker uses run_gated so the flag
+        # clears exactly when the reclaim worker's own done/error
+        # terminates - not before.
         total = sum(r.trashed_bytes for r in reports)
 
         def _resolved(confirmed: bool | None) -> None:
@@ -213,11 +262,13 @@ class SpaceFinderScreen(Screen):
                 def _error(exc: Exception) -> None:
                     self.notify(f"Reclaim failed: {exc}", severity="error")
 
-                run_offthread(self, _work, _done, _error)
+                run_gated(self, "_trashing", _work, _done, _error)
             else:
+                self._trashing = False
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
-        self.app.push_screen(
+        push_modal(
+            self,
             TypedGateModal(f"Permanently delete these items to reclaim "
                            f"~{format_size(total)}"),
             _resolved,
