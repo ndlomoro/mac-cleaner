@@ -70,6 +70,7 @@ def safe_delete(items: list[dict], category: str,
         )
 
     running = running_apps()
+    allow_user_content = cat.user_data and user_selected
     report = DeleteReport(category=category, dry_run=dry_run)
 
     for item in items:
@@ -82,7 +83,7 @@ def safe_delete(items: list[dict], category: str,
                 PathResult(str(item), Outcome.FAILED, 0, f"malformed item: {e}"))
             continue
 
-        protected, reason = is_protected(path, running)
+        protected, reason = is_protected(path, running, allow_user_content)
         if protected:
             report.results.append(PathResult(path_str, Outcome.SKIPPED, size, reason))
             continue

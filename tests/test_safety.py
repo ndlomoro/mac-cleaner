@@ -80,6 +80,38 @@ def test_junk_locations_not_protected(path):
     assert not protected
 
 
+@pytest.mark.parametrize("path", [
+    HOME / "Documents" / "big-video.mov",
+    HOME / "Desktop" / "old-export.zip",
+    HOME / "Pictures" / "dupes" / "IMG_0001 copy.jpg",
+])
+def test_soft_protected_yields_to_user_selection(path):
+    protected, _ = is_protected(path, running={})
+    assert protected  # default: still protected
+    protected, _ = is_protected(path, running={}, allow_user_content=True)
+    assert not protected  # explicit user selection may delete Soft-Protected content
+
+
+@pytest.mark.parametrize("path", [
+    HOME / "Library" / "Keychains" / "login.keychain-db",
+    HOME / "Library" / "Mail" / "V10",
+    HOME / ".ssh" / "id_ed25519",
+    HOME / ".gnupg" / "private-keys-v1.d",
+    HOME / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "f",
+    Path("/System/Library/CoreServices"),
+])
+def test_hard_protected_never_yields(path):
+    protected, _ = is_protected(path, running={}, allow_user_content=True)
+    assert protected
+
+
+def test_photoslibrary_and_trash_never_yield(tmp_path):
+    lib = tmp_path / "P.photoslibrary" / "db"
+    lib.mkdir(parents=True)
+    assert is_protected(lib, running={}, allow_user_content=True)[0]
+    assert is_protected(HOME / ".Trash" / "x", running={}, allow_user_content=True)[0]
+
+
 def test_symlink_escape_caught(tmp_path):
     # a symlink inside a "cache" dir pointing into ~/Documents must be protected
     target = HOME / "Documents"

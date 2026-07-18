@@ -68,10 +68,9 @@ def test_clean_large_files_via_safe_delete(tmp_path, monkeypatch):
     assert report.category == "large_files"
 
 
-def test_clean_large_files_protected_paths_skipped(tmp_path, monkeypatch):
-    monkeypatch.setattr(deleter_mod, "running_apps", lambda: {})
+def test_clean_large_files_hard_protected_still_skipped(monkeypatch, no_running_apps):
     from pathlib import Path as P
-    doc = P.home() / "Documents" / "important.pdf"
-    report = clean_large_files([str(doc)], dry_run=True)
+    key = P.home() / ".ssh" / "id_ed25519"
+    report = clean_large_files([str(key)], dry_run=True)
     assert len(report.skipped) == 1
     assert report.skipped[0].reason
