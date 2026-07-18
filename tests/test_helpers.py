@@ -31,12 +31,6 @@ def test_run_command_failure():
     assert rc == -1
     assert "No such file or directory" in stderr
 
-def test_run_command_timeout():
-    # Since timeout is set to 120, we mock subprocess.run to raise TimeoutExpired
-    # or test it with a shorter timeout if run_command allowed, but it has a hardcoded timeout=120.
-    # Let's mock subprocess.run
-    pass
-
 def test_get_dir_size(tmp_path):
     assert get_dir_size(tmp_path / "nonexistent") == 0
     

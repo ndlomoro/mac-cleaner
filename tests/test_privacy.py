@@ -27,6 +27,18 @@ def test_clean_browser_data_only_caches(monkeypatch, tmp_path):
     assert str(history) not in paths  # history is never cleaned by this function
 
 
+def test_clean_browser_data_real_run_trashes(tmp_path, monkeypatch, fake_trash):
+    cache_dir = tmp_path / "BrowserCache"
+    cache_dir.mkdir()
+    monkeypatch.setattr("cleaner.privacy.scan_browser_data", lambda: [
+        {"browser": "T", "type": "caches", "path": str(cache_dir), "size": 10},
+    ])
+    report = clean_browser_data(dry_run=False)
+    assert not cache_dir.exists()
+    assert (fake_trash / "BrowserCache").exists()
+    assert len(report.trashed) == 1
+
+
 def test_clear_recently_used_dry_run(monkeypatch, tmp_path):
     recents = tmp_path / "com.apple.recentitems"
     recents.write_text("data")

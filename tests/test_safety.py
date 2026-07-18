@@ -173,3 +173,18 @@ def test_not_protected_when_owner_quit():
     p = HOME / "Library" / "Caches" / "com.tinyspeck.slackmacgap" / "Cache"
     protected, _ = is_protected(p, running={"com.apple.finder": "Finder"})
     assert not protected
+
+
+def test_reasons_name_matched_root():
+    _, reason = is_protected(Path("/System/Library/x"), running={})
+    assert "/System" in reason
+    _, reason = is_protected(HOME / "Documents" / "f.txt", running={})
+    assert "Documents" in reason
+
+
+def test_unresolvable_path_fails_closed(tmp_path):
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop, target_is_directory=True)
+    protected, reason = is_protected(loop / "x", running={})
+    assert protected
+    assert reason

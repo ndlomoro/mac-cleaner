@@ -89,8 +89,11 @@ SOFT_PROTECTED = [
 ]
 
 
-def _under_any(path: Path, roots: list[Path]) -> bool:
-    return any(path == r or path.is_relative_to(r) for r in roots)
+def _match_root(path: Path, roots: list[Path]) -> Path | None:
+    for r in roots:
+        if path == r or path.is_relative_to(r):
+            return r
+    return None
 
 
 def is_protected(path: Path, running: dict[str, str] | None = None,
@@ -113,14 +116,18 @@ def is_protected(path: Path, running: dict[str, str] | None = None,
     if resolved in EXACT_PROTECTED:
         return True, f"{resolved} is a top-level system location"
 
-    if _under_any(resolved, SYSTEM_PROTECTED) and not _under_any(resolved, SYSTEM_EXEMPT):
-        return True, "macOS system path"
+    system_root = _match_root(resolved, SYSTEM_PROTECTED)
+    if system_root is not None and _match_root(resolved, SYSTEM_EXEMPT) is None:
+        return True, f"macOS system path ({system_root})"
 
-    if _under_any(resolved, HARD_PROTECTED):
-        return True, "personal data (protected location)"
+    hard_root = _match_root(resolved, HARD_PROTECTED)
+    if hard_root is not None:
+        return True, f"personal data ({hard_root})"
 
-    if not allow_user_content and _under_any(resolved, SOFT_PROTECTED):
-        return True, "personal data (use Space Finder to remove individually)"
+    if not allow_user_content:
+        soft_root = _match_root(resolved, SOFT_PROTECTED)
+        if soft_root is not None:
+            return True, f"personal data ({soft_root} - use Space Finder to remove individually)"
 
     for part in resolved.parts:
         if part.endswith(".photoslibrary"):
