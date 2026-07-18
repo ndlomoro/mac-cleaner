@@ -11,6 +11,7 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
+from cleaner.large_files import clean_large_files
 from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
 from scanner.duplicates import find_duplicates
 from scanner.large_files import find_large_files
@@ -191,10 +192,15 @@ class SpaceFinderScreen(Screen):
                 return
 
             def _work() -> list[DeleteReport]:
-                return [
-                    safe_delete(rows, category, dry_run=False, user_selected=True)
-                    for category, rows in picked.items()
-                ]
+                reports = []
+                for category, rows in picked.items():
+                    if category == "large_files":
+                        reports.append(clean_large_files(
+                            [r["path"] for r in rows], dry_run=False))
+                    else:
+                        reports.append(safe_delete(
+                            rows, category, dry_run=False, user_selected=True))
+                return reports
 
             def _done(reports: list[DeleteReport]) -> None:
                 self.query_one(ReportView).show(reports)
