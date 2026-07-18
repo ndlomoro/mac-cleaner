@@ -83,6 +83,24 @@ async def test_junk_preview_toggle(tmp_path, monkeypatch, fake_trash):
         assert text2 == ""
 
 
+async def test_junk_preview_clears_after_real_clean(tmp_path, monkeypatch, fake_trash):
+    f, sr = _fixture_scan(tmp_path)
+    monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("v")       # preview on - lists the now-stale path
+        await pilot.pause()
+        assert str(f)[-76:] in str(host.screen.query_one("#preview").content)
+        await pilot.press("c")       # real clean - trashes the item, then
+                                      # offers the reclaim gate (TypedGateModal
+                                      # is now on top of the screen stack)
+        await pilot.pause()
+        junk_screen = host.screen_stack[-2]
+        assert str(junk_screen.query_one("#preview").content) == ""
+        assert junk_screen._preview_shown is False
+
+
 async def test_double_press_does_not_double_clean(tmp_path, monkeypatch, fake_trash):
     f, sr = _fixture_scan(tmp_path)
     monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])

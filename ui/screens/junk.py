@@ -79,6 +79,11 @@ class JunkScreen(Screen):
 
         def _done(reports: list[DeleteReport]) -> None:
             self.query_one(ReportView).show(reports)
+            if not dry_run:
+                # A real Clean invalidates any preview built from the pre-clean
+                # self.results - those paths are now in the Trash, not on disk.
+                self.query_one("#preview", Static).update("")
+                self._preview_shown = False
             if not dry_run and any(r.trashed for r in reports):
                 self._offer_reclaim(reports)
             self._cleaning = False
