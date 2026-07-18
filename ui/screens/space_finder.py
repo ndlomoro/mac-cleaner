@@ -13,6 +13,7 @@ from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
 from scanner.duplicates import find_duplicates
 from scanner.large_files import find_large_files
 from scanner.system_data import scan_space_finder
+from ui.screens._util import run_offthread
 from ui.widgets.gates import ConfirmModal, TypedGateModal
 from ui.widgets.report_view import ReportView
 from utils.helpers import format_size
@@ -157,8 +158,10 @@ class SpaceFinderScreen(Screen):
                     self.notify(f"Reclaimed ~{format_size(result.freed_bytes)} "
                                 f"({result.deleted} items)")
 
-                self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
-                                thread=True)
+                def _error(exc: Exception) -> None:
+                    self.notify(f"Reclaim failed: {exc}", severity="error")
+
+                run_offthread(self, _work, _done, _error)
             else:
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
