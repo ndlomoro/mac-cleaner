@@ -44,3 +44,17 @@ async def test_typed_gate_escape_rejects():
     async with host.run_test() as pilot:
         await pilot.press("escape")
     assert host.result is False
+
+
+async def test_confirm_modal_cancel_button():
+    host = Host(ConfirmModal("Move 1 item to Trash?"))
+    async with host.run_test() as pilot:
+        await pilot.click("#cancel")
+    assert host.result is False
+
+
+async def test_typed_gate_cancel_button():
+    host = Host(TypedGateModal("Delete"))
+    async with host.run_test() as pilot:
+        await pilot.click("#cancel")
+    assert host.result is False
