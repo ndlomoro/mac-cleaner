@@ -1,5 +1,4 @@
 import plistlib
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -64,3 +63,15 @@ def test_future_backup_date_clamps_to_zero(tmp_path, monkeypatch):
         "Last Backup Date": datetime.now() + timedelta(days=30),
     })
     assert scan_ios_backups().files[0]["age_days"] == 0
+
+
+def test_truncated_xml_plist_does_not_kill_the_scan(tmp_path, monkeypatch):
+    monkeypatch.setattr("scanner.ios_backups.BACKUP_ROOT", tmp_path)
+    _make_backup(tmp_path, "ffff6666",
+                 b'<?xml version="1.0"?><plist><string>unterminated')
+    _make_backup(tmp_path, "gggg7777", {"Product Version": "18.0"})
+    rows = {r["path"].rsplit("/", 1)[-1]: r for r in scan_ios_backups().files}
+    assert len(rows) == 2
+    assert rows["ffff6666"]["device_name"] is None
+    assert rows["ffff6666"]["ios_version"] is None
+    assert rows["gggg7777"]["ios_version"] == "18.0"

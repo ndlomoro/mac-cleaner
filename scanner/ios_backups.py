@@ -18,13 +18,22 @@ def _read_info(backup_dir: Path) -> dict:
         with open(info, "rb") as f:
             data = plistlib.load(f)
         return data if isinstance(data, dict) else {}
-    except (OSError, PermissionError, plistlib.InvalidFileException, ValueError):
+    except Exception:
+        # Fully-isolated boundary: any read/parse failure degrades to {}
+        # rather than aborting the whole scan. Deliberately broad because
+        # a truncated XML-format Info.plist raises xml.parsers.expat.ExpatError
+        # (via plistlib's XML parser), not just OSError/InvalidFileException/
+        # ValueError - and no single backup's bad metadata may drop every
+        # other backup from the list.
         return {}
 
 
 def _backup_age_days(info: dict, backup_dir: Path) -> int:
     last = info.get("Last Backup Date")
     if isinstance(last, datetime):
+        # datetime.now()/delta.days is UTC-naive-imprecise at the day
+        # boundary (local calendar day vs. exact 24h elapsed); acceptable
+        # here since age_days only drives a coarse staleness signal.
         delta = datetime.now(tz=last.tzinfo) - last
         return max(0, int(delta.days))
     return int(file_age_days(backup_dir))
