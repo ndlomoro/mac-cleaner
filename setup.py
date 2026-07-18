@@ -43,6 +43,7 @@ OPTIONS = {
         "cleaner",
         "utils",
         "ui",
+        "textual",
     ],
     "excludes": [
         "tkinter",

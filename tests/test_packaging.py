@@ -21,3 +21,9 @@ def test_setup_packages_covers_all_top_level_packages():
     }
     missing = on_disk - _setup_packages()
     assert not missing, f"setup.py packages missing: {missing}"
+
+
+def test_setup_packages_includes_textual():
+    # The app is built on Textual (see main.py) - py2app must bundle it and
+    # its transitive deps, or the frozen .app fails to import at launch.
+    assert "textual" in _setup_packages()

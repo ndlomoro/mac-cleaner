@@ -6,7 +6,6 @@ from scanner.optimization import check_launch_agents
 from cleaner.optimization import (
     optimize_mac,
     run_brew_cleanup,
-    run_periodic_scripts,
     clear_xcode_derived_data,
     clear_cocoapods_cache,
     clear_npm_cache,
@@ -49,11 +48,6 @@ def test_run_brew_cleanup(monkeypatch):
     res2 = run_brew_cleanup(dry_run=False)
     assert "complete" in res2["message"]
     assert res2["output"] == "cleaned 10MB"
-
-def test_run_periodic_scripts(monkeypatch):
-    monkeypatch.setattr(cleaner.optimization, "run_command", lambda cmd, sudo=False: ("periodic success", "", 0))
-    res = run_periodic_scripts(dry_run=False)
-    assert res["periodic_scripts"]["daily"]["success"] is True
 
 import core.deleter as deleter_mod
 from core.deleter import DeleteReport

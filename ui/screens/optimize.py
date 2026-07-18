@@ -92,6 +92,9 @@ class OptimizeScreen(Screen):
                 if isinstance(output, DeleteReport):
                     lines.append(header_markup(output.category))
                     lines.append(render_report(output))
+                elif output.get("error"):
+                    message = output.get("message", output["error"])
+                    lines.append(f"[red]FAILED[/red] {task}: {message}")
                 elif output.get("skipped"):
                     lines.append(f"[dim]SKIP[/dim] {task}")
                 else:

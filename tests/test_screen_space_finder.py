@@ -1,8 +1,10 @@
 from textual.app import App
 from textual.widgets import SelectionList
 
+from scanner.large_files import LargeFile
 from scanner.system_data import ScanResult
 from ui.screens.space_finder import SpaceFinderScreen
+from ui.widgets.gates import ConfirmModal
 
 
 class Host(App):
@@ -138,3 +140,38 @@ async def test_keep_one_invariant(tmp_path, monkeypatch, fake_trash):
         await pilot.press("down", "space")  # try to select copy 2 - refused
         await pilot.pause()
         assert len(dup_list.selected) == 1  # one copy always kept
+
+
+async def test_cross_tab_keep_one_enforced_via_large_files(
+        tmp_path, monkeypatch, fake_trash):
+    """Both copies of a duplicate group are also visible (and independently
+    selectable) in the Large Files tab. Picking both there must be refused
+    just like picking both directly in the Duplicates tab."""
+    a = tmp_path / "a.jpg"; a.write_bytes(b"1234")
+    b = tmp_path / "b.jpg"; b.write_bytes(b"1234")
+
+    dl = ScanResult("downloads", "Downloads")
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr(
+        "ui.screens.space_finder.find_large_files",
+        lambda **kw: [LargeFile(str(a), 4, 0), LargeFile(str(b), 4, 0)])
+    groups = [{"hash": "h1", "size": 4, "files": [str(a), str(b)], "wasted": 4}]
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates",
+                        lambda **kw: groups)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        lf_list = host.screen.query_one("#list-large_files", SelectionList)
+        lf_list.focus()
+        await pilot.press("space")          # select copy 1 via Large Files
+        await pilot.press("down", "space")  # select copy 2 via Large Files
+        await pilot.pause()
+        assert len(lf_list.selected) == 2   # this tab has no per-group guard
+
+        await pilot.press("t")
+        await pilot.pause()
+        # refused before the ConfirmModal even appears - nothing was touched
+        assert not isinstance(host.screen_stack[-1], ConfirmModal)
+        assert a.exists()
+        assert b.exists()

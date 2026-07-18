@@ -34,36 +34,6 @@ def run_brew_cleanup(dry_run: bool = False) -> dict:
     return {"message": "Homebrew cleanup failed", "error": stderr.strip()}
 
 
-def run_periodic_scripts(dry_run: bool = False) -> dict:
-    """Run macOS daily/weekly/monthly maintenance scripts."""
-    if dry_run:
-        log_cleaning_action("Would Run Periodic Scripts", "", dry_run=True)
-        return {
-            "message": "Would run daily/weekly/monthly periodic scripts",
-            "dry_run": True,
-            "scripts": ["/usr/libexec periodic daily", "/usr/libexec periodic weekly", "/usr/libexec periodic monthly"],
-        }
-
-    results = {}
-    for period in ["daily", "weekly", "monthly"]:
-        stdout, stderr, rc = run_command(
-            ["/usr/libexec", "periodic", period],
-            sudo=True,
-        )
-        if rc == 0:
-            log_cleaning_action(f"Ran {period} Script", "")
-        else:
-            log_cleaning_action(f"Failed {period} Script", stderr.strip())
-            
-        results[period] = {
-            "success": rc == 0,
-            "output": stdout.strip()[:500] if stdout else "",
-            "error": stderr.strip()[:500] if stderr else "",
-        }
-
-    return {"periodic_scripts": results}
-
-
 def _clear_cache_dir(path: Path, category: str, dry_run: bool) -> DeleteReport | dict:
     if not path.exists():
         return {"message": f"No {category} found", "skipped": True}

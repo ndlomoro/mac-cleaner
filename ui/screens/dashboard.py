@@ -35,9 +35,15 @@ class DashboardScreen(Screen):
 
     def on_mount(self) -> None:
         usage = get_disk_usage()
-        self.query_one("#disk", Static).update(
-            f"Disk: {format_size(usage['free'])} free of "
-            f"{format_size(usage['total'])} ({usage['percent']:.0f}% used)")
+        if not usage:
+            self.query_one("#disk", Static).update("Disk: unavailable")
+        else:
+            free = usage.get("free", 0)
+            total = usage.get("total", 0)
+            percent = usage.get("percent", 0)
+            self.query_one("#disk", Static).update(
+                f"Disk: {format_size(free)} free of "
+                f"{format_size(total)} ({percent:.0f}% used)")
         table = self.query_one(DataTable)
         table.add_columns("Key", "Area", "Levels")
         for key, label, _, levels in AREAS:

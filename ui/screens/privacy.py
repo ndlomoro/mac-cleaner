@@ -97,8 +97,17 @@ class PrivacyScreen(Screen):
             if not confirmed:
                 self.notify("Recents kept.")
                 return
-            stats = clear_recently_used(dry_run=False)
-            self.notify(f"Cleared {stats['cleared']} recent-items list(s)")
+
+            def _work():
+                return clear_recently_used(dry_run=False)
+
+            def _done(stats: dict) -> None:
+                self.notify(f"Cleared {stats['cleared']} recent-items list(s)")
+
+            def _error(exc: Exception) -> None:
+                self.notify(f"Failed: {exc}", severity="error")
+
+            run_offthread(self, _work, _done, _error)
 
         self.app.push_screen(
             TypedGateModal("Clearing the recently-used list"), _resolved)

@@ -15,6 +15,8 @@ async def test_optimize_renders_reports_and_external_labels(monkeypatch, fake_tr
         "brew_cleanup": {"message": "Cleaned up", "skipped": False},
         "xcode_derived_data": {"message": "No xcode_derived_data found",
                                "skipped": True},
+        "npm_cache": {"message": "npm cache cleanup failed",
+                     "error": "npm not installed"},
     }
     monkeypatch.setattr("ui.screens.optimize.optimize_mac",
                         lambda dry_run: result)
@@ -27,6 +29,7 @@ async def test_optimize_renders_reports_and_external_labels(monkeypatch, fake_tr
         assert "Would move to Trash" in text          # DeleteReport rendering
         assert "not recoverable via Trash" in text    # external-tool label
         assert "SKIP" in text
+        assert "FAILED" in text                        # error dict, not "OK"
 
 
 async def test_optimize_lists_launch_agents(monkeypatch):

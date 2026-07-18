@@ -8,7 +8,7 @@ def delete_snapshot(name: str) -> tuple[bool, str]:
     """Delete a local snapshot by name. Returns (success, message)."""
     snap_name = name.split("/")[-1].strip()
     stdout, stderr, rc = run_command(
-        ["tmutil", "deletelocalsnapshots", snap_name],
+        ["-n", "tmutil", "deletelocalsnapshots", snap_name],
         sudo=True,
     )
     if rc == 0:

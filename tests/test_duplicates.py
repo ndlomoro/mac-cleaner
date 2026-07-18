@@ -37,7 +37,7 @@ def test_find_duplicates(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner.duplicates, "SCAN_DIRS", [dir1])
     
     duplicates = find_duplicates(min_size_bytes=10240)
-    
+
     assert len(duplicates) == 1
     dup_group = duplicates[0]
     assert dup_group["size"] == len(b"same content" * 1000)
@@ -45,3 +45,34 @@ def test_find_duplicates(tmp_path, monkeypatch):
     assert str(f1) in dup_group["files"]
     assert str(f2) in dup_group["files"]
     assert dup_group["wasted"] == dup_group["size"]
+
+
+def test_find_duplicates_excludes_photoslibrary(tmp_path, monkeypatch):
+    """.photoslibrary contents are hard-protected and can never be deleted -
+    hashing them wastes hours and yields dead rows (never-actionable groups)."""
+    dir1 = tmp_path / "Pictures"
+    dir1.mkdir()
+
+    lib = dir1 / "Photos Library.photoslibrary"
+    (lib / "originals").mkdir(parents=True)
+    inner1 = lib / "originals" / "inner1.bin"
+    inner1.write_bytes(b"library content" * 1000)
+    inner2 = lib / "originals" / "inner2.bin"
+    inner2.write_bytes(b"library content" * 1000)
+
+    # A normal (non-library) duplicate pair, which must still be found.
+    normal1 = dir1 / "normal1.bin"
+    normal1.write_bytes(b"normal content" * 1000)
+    normal2 = dir1 / "normal2.bin"
+    normal2.write_bytes(b"normal content" * 1000)
+
+    monkeypatch.setattr(scanner.duplicates, "SCAN_DIRS", [dir1])
+
+    duplicates = find_duplicates(min_size_bytes=10240)
+
+    assert len(duplicates) == 1
+    dup_group = duplicates[0]
+    assert str(normal1) in dup_group["files"]
+    assert str(normal2) in dup_group["files"]
+    assert str(inner1) not in dup_group["files"]
+    assert str(inner2) not in dup_group["files"]

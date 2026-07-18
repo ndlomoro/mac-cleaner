@@ -28,6 +28,7 @@ class SnapshotsScreen(Screen):
 
     def on_mount(self) -> None:
         self.snapshots = []
+        self._busy = False
         run_offthread(self, list_snapshots, self._show, self._load_error)
 
     def _load_error(self, exc: Exception) -> None:
@@ -42,11 +43,15 @@ class SnapshotsScreen(Screen):
         if not self.snapshots:
             self.notify("No snapshots to delete.")
             return
+        if self._busy:
+            self.notify("Already deleting…")
+            return
 
         def _resolved(confirmed: bool | None) -> None:
             if not confirmed:
                 self.notify("Snapshots kept.")
                 return
+            self._busy = True
             run_offthread(self, lambda: clean_snapshots(dry_run=False),
                           self._report, self._delete_error)
 
@@ -56,12 +61,18 @@ class SnapshotsScreen(Screen):
         )
 
     def _delete_error(self, exc: Exception) -> None:
+        self._busy = False
         self.notify(f"Failed to delete snapshots: {exc}", severity="error")
 
     def _report(self, result: dict) -> None:
+        self._busy = False
         reclaimed = result.get("reclaimed_bytes", 0)
         space = (f"Reclaimed ~{format_size(reclaimed)}" if reclaimed
                  else "Reclaimed: unknown (couldn't isolate the freed space)")
         self.query_one("#snap-log", Static).update(
             f"Deleted: {result.get('deleted', 0)} - {space}")
+        if result.get("failed", 0) > 0 and result.get("deleted", 0) == 0:
+            self.notify(
+                "sudo needs authorization - run 'sudo -v' in a terminal, then retry.",
+                severity="warning")
         run_offthread(self, list_snapshots, self._show, self._load_error)

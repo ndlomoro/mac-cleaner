@@ -48,9 +48,13 @@ class JunkScreen(Screen):
         self._preview_shown = True
 
     def _scan(self) -> None:
-        for res in scan_all():
-            self.app.call_from_thread(self._add_category, res)
-        self.app.call_from_thread(self._scan_done)
+        try:
+            for res in scan_all():
+                self.app.call_from_thread(self._add_category, res)
+            self.app.call_from_thread(self._scan_done)
+        except Exception as e:  # noqa: BLE001 - boundary: never let a raise kill the app
+            self.app.call_from_thread(
+                self.notify, f"Scan failed: {e}", severity="error")
 
     def _add_category(self, res) -> None:
         self.results[res.category] = res

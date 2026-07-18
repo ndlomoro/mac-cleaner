@@ -1,5 +1,4 @@
 import time
-from pathlib import Path
 
 from textual.app import App
 

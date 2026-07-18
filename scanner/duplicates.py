@@ -55,6 +55,11 @@ def find_duplicates(min_size_bytes: int = 10240) -> list[dict]:
                     continue
                 if item.suffix.lower() in SKIP_EXTENSIONS:
                     continue
+                if any(part.lower().endswith(".photoslibrary")
+                       for part in item.parts):
+                    # Hard-protected bundle contents can never be deleted -
+                    # hashing them wastes hours and yields dead rows.
+                    continue
                 try:
                     size = item.stat().st_size
                     if size >= min_size_bytes:

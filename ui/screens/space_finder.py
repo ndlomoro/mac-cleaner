@@ -45,19 +45,23 @@ class SpaceFinderScreen(Screen):
     # ---------- scanning ----------
 
     def _scan(self) -> None:
-        for res in scan_space_finder():
-            rows = [dict(f) for f in res.files]
-            self.app.call_from_thread(self._fill, res.category, rows)
-        large = [{"path": lf.path, "size": lf.size, "age_days": lf.age_days}
-                 for lf in find_large_files(min_size_mb=100, max_results=200)]
-        self.app.call_from_thread(self._fill, "large_files", large)
-        dups = []
-        for group in find_duplicates():
-            for p in group["files"]:
-                dups.append({"path": p, "size": group["size"],
-                             "age_days": 0, "group": group["hash"]})
-        self.app.call_from_thread(self._fill, "duplicates", dups)
-        self.app.call_from_thread(self._scan_done)
+        try:
+            for res in scan_space_finder():
+                rows = [dict(f) for f in res.files]
+                self.app.call_from_thread(self._fill, res.category, rows)
+            large = [{"path": lf.path, "size": lf.size, "age_days": lf.age_days}
+                     for lf in find_large_files(min_size_mb=100, max_results=200)]
+            self.app.call_from_thread(self._fill, "large_files", large)
+            dups = []
+            for group in find_duplicates():
+                for p in group["files"]:
+                    dups.append({"path": p, "size": group["size"],
+                                 "age_days": 0, "group": group["hash"]})
+            self.app.call_from_thread(self._fill, "duplicates", dups)
+            self.app.call_from_thread(self._scan_done)
+        except Exception as e:  # noqa: BLE001 - boundary: never let a raise kill the app
+            self.app.call_from_thread(
+                self.notify, f"Scan failed: {e}", severity="error")
 
     def _fill(self, category: str, rows: list[dict]) -> None:
         sel = self.query_one(f"#list-{category}", SelectionList)
@@ -109,6 +113,23 @@ class SpaceFinderScreen(Screen):
         if not picked:
             self.notify("Nothing selected.")
             return
+
+        # Cross-tab Keep-One enforcement: a duplicate group can also be picked
+        # wholesale via the Large Files/Downloads tabs, bypassing the
+        # Duplicates-tab guard in on_selection_list_selected_changed. Check
+        # every known duplicate group (not just the duplicates tab's own
+        # selection) against the full set of picked paths across all tabs.
+        picked_paths = {row["path"] for rows in picked.values() for row in rows}
+        groups: dict[str, set[str]] = {}
+        for item in self.items["duplicates"].values():
+            groups.setdefault(item["group"], set()).add(item["path"])
+        for group_paths in groups.values():
+            if group_paths and group_paths <= picked_paths:
+                self.notify(
+                    "One copy of each duplicate is always kept - deselect one copy.",
+                    severity="warning")
+                return
+
         count = sum(len(v) for v in picked.values())
         total = sum(f["size"] for v in picked.values() for f in v)
 
@@ -116,14 +137,23 @@ class SpaceFinderScreen(Screen):
             if not confirmed:
                 self.notify("Cancelled - nothing was touched.")
                 return
-            reports = [
-                safe_delete(rows, category, dry_run=False, user_selected=True)
-                for category, rows in picked.items()
-            ]
-            self.query_one(ReportView).show(reports)
-            self._refresh_lists(picked, reports)
-            if any(r.trashed for r in reports):
-                self._offer_reclaim(reports)
+
+            def _work() -> list[DeleteReport]:
+                return [
+                    safe_delete(rows, category, dry_run=False, user_selected=True)
+                    for category, rows in picked.items()
+                ]
+
+            def _done(reports: list[DeleteReport]) -> None:
+                self.query_one(ReportView).show(reports)
+                self._refresh_lists(picked, reports)
+                if any(r.trashed for r in reports):
+                    self._offer_reclaim(reports)
+
+            def _error(exc: Exception) -> None:
+                self.notify(f"Trash failed: {exc}", severity="error")
+
+            run_offthread(self, _work, _done, _error)
 
         self.app.push_screen(
             ConfirmModal(f"Move {count} item(s) (~{format_size(total)}) to Trash?"),
