@@ -94,3 +94,33 @@ def test_staleness_walk_never_enters_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr("scanner.dev_junk.os.walk", recording_walk, raising=False)
     find_project_artifacts()
     assert not any("node_modules" in v for v in visited)
+
+
+def test_permission_denied_dir_does_not_crash_scan(tmp_path, monkeypatch):
+    monkeypatch.setattr("scanner.dev_junk.PROJECT_ROOTS", [tmp_path])
+    proj = _make_node_project(tmp_path, "app", 10, 10)
+    locked = proj / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("x")
+    os.chmod(locked, 0o000)
+
+    try:
+        if os.access(locked, os.R_OK):
+            # chmod-based denial doesn't reproduce under this test user
+            # (e.g. running as root, which ignores mode bits) - force the
+            # PermissionError path deterministically instead.
+            import scanner.dev_junk as dj
+            real_exists = Path.exists
+
+            def fake_exists(self, *a, **kw):
+                if self == locked / "pyvenv.cfg":
+                    raise PermissionError("simulated for test")
+                return real_exists(self, *a, **kw)
+
+            monkeypatch.setattr(dj.Path, "exists", fake_exists)
+
+        results = find_project_artifacts()
+    finally:
+        os.chmod(locked, 0o755)
+
+    assert len([r for r in results if r["kind"] == "node_modules"]) == 1
