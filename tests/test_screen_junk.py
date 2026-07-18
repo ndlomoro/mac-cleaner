@@ -6,6 +6,7 @@ from textual.app import App
 from scanner.system_data import ScanResult
 from ui.app import CleanerApp
 from ui.screens.junk import JunkScreen
+from ui.widgets.category_header import CategoryHeader
 
 
 class Host(App):
@@ -190,3 +191,30 @@ async def test_resume_during_reclaim_worker_does_not_rescan(tmp_path, monkeypatc
         await pilot.press("1")
         await pilot.pause()
     assert scan_calls == [1, 1]
+
+
+async def test_reentry_mid_scan_does_not_double_scan(monkeypatch):
+    """Minor closed on re-review: junk's INITIAL scan had no covering flag,
+    so backing out and re-entering while scan_all() was still running fired
+    a second concurrent scan worker - reviewer reproduced doubled
+    CategoryHeader widgets. _scanning must guard the resume the same way
+    the destructive-flow busy flags do."""
+    def _slow_scan_all():
+        time.sleep(0.3)
+        sr = ScanResult("caches", "User Caches")
+        return [sr]
+
+    monkeypatch.setattr("ui.screens.junk.scan_all", _slow_scan_all)
+    app = CleanerApp()
+    async with app.run_test() as pilot:
+        await pilot.press("1")        # dashboard -> Junk: slow scan starts
+        await pilot.pause()
+        await pilot.press("escape")   # navigate away mid-scan
+        await pilot.pause()
+        await pilot.press("1")        # re-enter mid-scan - must NOT rescan
+        await pilot.pause()
+        await asyncio.sleep(0.4)      # let the slow scan land
+        await pilot.pause()
+        await pilot.pause()
+        headers = app.screen.query(CategoryHeader)
+        assert len(headers) == 1      # exactly one per category, no duplicates

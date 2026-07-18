@@ -31,6 +31,7 @@ class JunkScreen(Screen):
 
     def on_mount(self) -> None:
         self._cleaning = False
+        self._scanning = False
         self._rescan()
 
     def _rescan(self) -> None:
@@ -40,10 +41,11 @@ class JunkScreen(Screen):
         self.query_one("#preview", Static).update("")
         self.query_one(ReportView).update("")
         self.sub_title = "System Data (Junk) - scanning…"
+        self._scanning = True
         self.run_worker(self._scan, thread=True)
 
     def on_screen_resume(self) -> None:
-        if skip_resume_rescan(self) or self._cleaning:
+        if skip_resume_rescan(self) or self._cleaning or self._scanning:
             return
         self._rescan()
 
@@ -64,8 +66,7 @@ class JunkScreen(Screen):
                 self.app.call_from_thread(self._add_category, res)
             self.app.call_from_thread(self._scan_done)
         except Exception as e:  # noqa: BLE001 - boundary: never let a raise kill the app
-            self.app.call_from_thread(
-                self.notify, f"Scan failed: {e}", severity="error")
+            self.app.call_from_thread(self._scan_error, e)
 
     def _add_category(self, res) -> None:
         self.results[res.category] = res
@@ -74,7 +75,12 @@ class JunkScreen(Screen):
         body.mount(Static(f"  {res.name}: {res.file_count} items (~{res.human_size})"))
 
     def _scan_done(self) -> None:
+        self._scanning = False
         self.sub_title = "System Data (Junk)"
+
+    def _scan_error(self, e: Exception) -> None:
+        self._scanning = False
+        self.notify(f"Scan failed: {e}", severity="error")
 
     def action_dry_run(self) -> None:
         self._run_clean(dry_run=True)

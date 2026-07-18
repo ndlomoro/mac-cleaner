@@ -23,6 +23,7 @@ class UninstallScreen(Screen):
 
     def on_mount(self) -> None:
         self._busy = False
+        self._scanning = False
         table = self.query_one(DataTable)
         table.add_columns("App", "Size")
         self._rescan()
@@ -32,10 +33,10 @@ class UninstallScreen(Screen):
         self.query_one(DataTable).clear()
         self.query_one("#preview", Static).update("")
         self.query_one(ReportView).update("")
-        run_offthread(self, get_installed_apps, self._fill, self._load_error)
+        run_gated(self, "_scanning", get_installed_apps, self._fill, self._load_error)
 
     def on_screen_resume(self) -> None:
-        if skip_resume_rescan(self) or self._busy:
+        if skip_resume_rescan(self) or self._busy or self._scanning:
             return
         self._rescan()
 
