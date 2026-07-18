@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from scanner.mail_junk import scan_mail_downloads, scan_mail_junk
+from scanner.mail_junk import _outside_mail_store, scan_mail_downloads, scan_mail_junk
+from utils.helpers import HOME
 
 
 def test_scans_download_dirs(tmp_path, monkeypatch):
@@ -35,3 +36,10 @@ def test_scan_mail_junk_returns_nonempty_results_only(tmp_path, monkeypatch):
     monkeypatch.setattr("scanner.mail_junk.MAIL_DOWNLOAD_DIRS", [tmp_path / "nope"])
     monkeypatch.setattr("scanner.mail_junk.MAIL_CACHE_DIRS", [tmp_path / "also-nope"])
     assert scan_mail_junk() == []
+
+
+def test_outside_mail_store_allows_legacy_mail_downloads_sibling():
+    # Pins the component-boundary guarantee: the legacy "Mail Downloads"
+    # location is a SIBLING of ~/Library/Mail, not a child, so the guard
+    # must treat it as outside the hard-protected Mail store.
+    assert _outside_mail_store(HOME / "Library" / "Mail Downloads")
