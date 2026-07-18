@@ -38,6 +38,11 @@ EXCLUDED = {
     ".Trashes",
     ".fseventsd",
     ".DocumentRevisions-V100",
+    # owned by mail_cache (scanner/mail_junk.py) - scan_caches must not also
+    # emit it as a top-level row, or scan_all double-counts the same bytes
+    # and bulk Clean trashes the parent before mail_cache's children can
+    # report SKIPPED.
+    "com.apple.mail",
 }
 
 

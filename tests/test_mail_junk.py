@@ -17,12 +17,13 @@ def test_scans_download_dirs(tmp_path, monkeypatch):
 
 
 def test_never_emits_under_library_mail(tmp_path, monkeypatch):
-    fake_mail = Path.home() / "Library" / "Mail" / "V10-fake-test-subdir"
-    # do NOT create it - configure the scanner AT a ~/Library/Mail path and
-    # verify the structural guard refuses even if the dir existed; use a
-    # tmp stand-in that IS created for the second assertion
-    monkeypatch.setattr("scanner.mail_junk.MAIL_DOWNLOAD_DIRS", [fake_mail])
-    assert scan_mail_downloads().file_count == 0
+    # A path under ~/Library/Mail need not exist on disk to be caught - the
+    # guard is a structural (path-relative-to) check, not an existence
+    # check. Exercise _outside_mail_store directly on a hypothetical
+    # subpath so this test can't pass by short-circuiting on
+    # root.exists() before the guard even runs.
+    hypothetical = HOME / "Library" / "Mail" / "x"
+    assert _outside_mail_store(hypothetical) is False
 
     inside = tmp_path / "Library" / "Mail" / "Downloads"
     inside.mkdir(parents=True)

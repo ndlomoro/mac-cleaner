@@ -325,6 +325,7 @@ def test_row_label_enriched_ios_with_version():
     assert "since backup" in label
     assert "Nick's iPhone" in label
     assert "(iOS 17.4)" in label
+    assert "…/x" in label
 
 
 def test_row_label_enriched_ios_without_version():
@@ -333,7 +334,19 @@ def test_row_label_enriched_ios_without_version():
     label = _row_label("ios_backups", item)
     assert "since backup" in label
     assert "Nick's iPhone" in label
-    assert "iOS" not in label
+    assert "(iOS" not in label
+    assert "…/x" in label
+
+
+def test_row_label_enriched_same_device_name_distinguishable_by_path():
+    # Two backups from devices sharing a display name (reset-and-repaired,
+    # or two phones the user happened to name the same) must not render
+    # identical labels - the path tail is what tells them apart.
+    item_a = {"path": "/Users/x/MobileSync/Backup/AAAA", "size": 1234,
+              "age_days": 5, "device_name": "iPhone", "ios_version": "17.4"}
+    item_b = {"path": "/Users/x/MobileSync/Backup/BBBB", "size": 1234,
+              "age_days": 5, "device_name": "iPhone", "ios_version": "17.4"}
+    assert _row_label("ios_backups", item_a) != _row_label("ios_backups", item_b)
 
 
 def test_row_label_generic_for_metadata_less_ios_row():
@@ -374,6 +387,7 @@ async def test_ios_backup_rows_show_device_and_staleness(
         plain_label = str(sel.get_option_at_index(1).prompt)
         assert "since backup" in enriched_label
         assert "Nick's iPhone" in enriched_label
+        assert f"…{str(enriched)[-40:]}" in enriched_label
         assert "since backup" not in plain_label
         assert f"…{str(plain)[-70:]}" in plain_label
 

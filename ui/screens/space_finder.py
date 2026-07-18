@@ -37,6 +37,10 @@ def _row_label(category: str, item: dict) -> str:
                  f"{item['device_name']}")
         if item.get("ios_version") is not None:
             label += f" (iOS {item['ios_version']})"
+        # Two devices can share a display name (reset-and-repaired, or two
+        # phones the user named the same) - the path tail is what makes
+        # otherwise-identical rows distinguishable (dev_junk convention).
+        label += f"  [dim]…{item['path'][-40:]}[/dim]"
         return label
     return f"{format_size(item['size']):>10}  {age}d  …{item['path'][-70:]}"
 

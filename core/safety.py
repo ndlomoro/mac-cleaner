@@ -19,6 +19,10 @@ KNOWN_OWNERS = {
     HOME / "Library" / "Application Support" / "Google" / "Chrome": Owner("com.google.Chrome", "Chrome"),
     HOME / "Library" / "Caches" / "Mozilla" / "Firefox": Owner("org.mozilla.firefox", "Firefox"),
     HOME / "Library" / "Application Support" / "Firefox": Owner("org.mozilla.firefox", "Firefox"),
+    # Container tree doesn't self-identify via a reverse-DNS bundle-id path
+    # segment under Caches like other apps do - needs its own entry so a
+    # running Mail.app still blocks a bulk clean of it (see scanner/mail_junk.py).
+    HOME / "Library" / "Containers" / "com.apple.mail": Owner("com.apple.mail", "Mail"),
 }
 
 _CACHES_ROOT = HOME / "Library" / "Caches"
