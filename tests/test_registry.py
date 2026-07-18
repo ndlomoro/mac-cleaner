@@ -22,12 +22,12 @@ def test_every_entry_has_explanation():
 
 def test_irreversible_is_exactly_risky_non_trash():
     irreversible = {k for k, c in REGISTRY.items() if c.irreversible}
-    assert irreversible == {"recents", "snapshots"}
+    assert irreversible == {"recents", "snapshots", "docker_junk", "ios_simulators"}
 
 
 def test_user_data_categories():
     user_data = {k for k, c in REGISTRY.items() if c.user_data}
-    assert user_data == {"downloads", "ios_backups", "large_files", "duplicates"}
+    assert user_data == {"downloads", "ios_backups", "large_files", "duplicates", "project_artifacts"}
 
 
 def test_non_trash_junk_is_not_irreversible():
@@ -47,5 +47,6 @@ def test_all_cleaner_categories_registered():
         "app_bundle", "app_leftovers", "launch_agents",
         "xcode_derived_data", "cocoapods_cache", "pip_cache",
         "brew_cleanup", "npm_cache", "snapshots",
+        "project_artifacts", "docker_junk", "ios_simulators",
     ]:
         assert key in REGISTRY

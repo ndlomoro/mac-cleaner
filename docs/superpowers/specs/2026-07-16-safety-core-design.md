@@ -82,12 +82,15 @@ Initial assignments:
 | brew_cleanup, npm_cache | SAFE | – | ✗ (external tool) |
 | app_bundle | CAUTION | – | ✓ |
 | app_leftovers, launch_agents | CAUTION | – | ✓ |
+| project_artifacts | CAUTION | ✓ | ✓ |
 | tracking_data, browser_history | RISKY | – | ✓ |
 | downloads, ios_backups | RISKY | ✓ | ✓ |
 | large_files | RISKY | ✓ | ✓ |
 | duplicates | RISKY | ✓ | ✓ |
 | recents | RISKY | – | ✗ → **Irreversible Action** |
 | snapshots | RISKY | – | ✗ → **Irreversible Action** |
+| docker_junk | RISKY | – | ✗ → **Irreversible Action** |
+| ios_simulators | RISKY | – | ✗ → **Irreversible Action** |
 
 `safe_delete` refuses any category not in the registry.
 
