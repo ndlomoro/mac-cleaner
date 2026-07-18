@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from textual.app import App
@@ -48,3 +49,22 @@ async def test_junk_dry_run_touches_nothing(tmp_path, monkeypatch, fake_trash):
         assert f.exists()
         report_text = str(host.screen.query_one("#report").content)
         assert "Would move to Trash" in report_text
+
+
+async def test_double_press_does_not_double_clean(tmp_path, monkeypatch, fake_trash):
+    f, sr = _fixture_scan(tmp_path)
+    monkeypatch.setattr("ui.screens.junk.scan_all", lambda: [sr])
+    calls = []
+    real_clean = __import__("ui.screens.junk", fromlist=["clean_files"]).clean_files
+    def counting_clean(res, dry_run=False):
+        calls.append(1)
+        time.sleep(0.05)  # keep the worker "in flight" across both key presses
+        return real_clean(res, dry_run=dry_run)
+    monkeypatch.setattr("ui.screens.junk.clean_files", counting_clean)
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("d", "d")
+        await pilot.pause()
+        await pilot.pause()
+    assert len(calls) == 1

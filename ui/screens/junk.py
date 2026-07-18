@@ -5,7 +5,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
 from cleaner.system_data import clean_files
-from core.deleter import DeleteReport, reclaim
+from core.deleter import DeleteReport, ReclaimReport, reclaim
 from scanner.system_data import scan_all
 from ui.widgets.category_header import CategoryHeader
 from ui.widgets.gates import TypedGateModal
@@ -28,6 +28,7 @@ class JunkScreen(Screen):
 
     def on_mount(self) -> None:
         self.results = {}
+        self._cleaning = False
         self.sub_title = "System Data (Junk) - scanning…"
         self.run_worker(self._scan, thread=True)
 
@@ -52,6 +53,11 @@ class JunkScreen(Screen):
         self._run_clean(dry_run=False)
 
     def _run_clean(self, dry_run: bool) -> None:
+        if self._cleaning:
+            self.notify("Already cleaning…")
+            return
+        self._cleaning = True
+
         def _work() -> list[DeleteReport]:
             return [clean_files(res, dry_run=dry_run)
                     for res in self.results.values()]
@@ -60,6 +66,7 @@ class JunkScreen(Screen):
             self.query_one(ReportView).show(reports)
             if not dry_run and any(r.trashed for r in reports):
                 self._offer_reclaim(reports)
+            self._cleaning = False
 
         self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
                         thread=True)
@@ -69,9 +76,15 @@ class JunkScreen(Screen):
 
         def _resolved(confirmed: bool | None) -> None:
             if confirmed:
-                result = reclaim(reports)
-                self.notify(f"Reclaimed ~{format_size(result.freed_bytes)} "
-                            f"({result.deleted} items)")
+                def _work() -> ReclaimReport:
+                    return reclaim(reports)
+
+                def _done(result: ReclaimReport) -> None:
+                    self.notify(f"Reclaimed ~{format_size(result.freed_bytes)} "
+                                f"({result.deleted} items)")
+
+                self.run_worker(lambda: self.app.call_from_thread(_done, _work()),
+                                thread=True)
             else:
                 self.notify("Kept in Trash - recover anytime with Put Back.")
 
