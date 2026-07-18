@@ -63,6 +63,14 @@ def test_clean_system_data_returns_reports_by_category(monkeypatch, tmp_path):
     assert isinstance(result["caches"], DeleteReport)
 
 
+def test_var_folders_excluded_from_bulk_junk():
+    # Decided 2026-07-18: a SAFE-badged bulk clean must not offer live
+    # per-user temp roots. /private/var/folders must never be scanned by
+    # the Junk (bulk-clean) paths.
+    assert Path("/private/var/folders") not in scanner.system_data.CACHE_DIRS
+    assert Path("/private/var/folders") not in scanner.system_data.TEMP_SCAN_DIRS
+
+
 def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
     # scan_all must never return user-data categories.
     # Uses isolated tmp dirs instead of real filesystem roots: an unmocked
@@ -75,12 +83,42 @@ def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
     log_dir = tmp_path / "Logs"
     log_dir.mkdir()
     (log_dir / "app.log").write_bytes(b"y")
+    monkeypatch.setattr("scanner.system_data.HOME", tmp_path)
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    (downloads / "bait.dmg").write_bytes(b"x")
     monkeypatch.setattr("scanner.system_data.CACHE_DIRS", [cache_dir])
+    monkeypatch.setattr("scanner.system_data.TEMP_SCAN_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.LOG_DIRS", [log_dir])
     results = scan_all(min_cache_age=0, min_log_age=0)
     categories = {r.category for r in results}
     assert categories
     assert categories <= {"caches", "logs", "temp"}
+
+
+def test_scan_temp_files_single_walk(monkeypatch, tmp_path):
+    cache = tmp_path / "Caches"
+    (cache / "deep" / "deeper").mkdir(parents=True)
+    (cache / "a.tmp").write_bytes(b"1")
+    (cache / "deep" / "b.bak").write_bytes(b"22")
+    (cache / "deep" / "deeper" / "c.log").write_bytes(b"333")
+    (cache / "deep" / "keep.dat").write_bytes(b"x")
+    monkeypatch.setattr("scanner.system_data.TEMP_SCAN_DIRS", [cache])
+
+    walks = {"n": 0}
+    import scanner.system_data as sd
+    real_rglob = Path.rglob
+
+    def counting_rglob(self, pattern):
+        walks["n"] += 1
+        return real_rglob(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", counting_rglob)
+    result = sd.scan_temp_files()
+    paths = {f["path"] for f in result.files}
+    assert paths == {str(cache / "a.tmp"), str(cache / "deep" / "b.bak"),
+                     str(cache / "deep" / "deeper" / "c.log")}
+    assert walks["n"] == 1  # one walk for one cache dir, not len(TEMP_PATTERNS)
 
 
 def test_scan_downloads_has_no_age_filter(monkeypatch, tmp_path):

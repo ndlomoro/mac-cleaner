@@ -80,6 +80,54 @@ def test_junk_locations_not_protected(path):
     assert not protected
 
 
+@pytest.mark.parametrize("path", [
+    HOME / "Documents" / "big-video.mov",
+    HOME / "Desktop" / "old-export.zip",
+    HOME / "Pictures" / "dupes" / "IMG_0001 copy.jpg",
+])
+def test_soft_protected_yields_to_user_selection(path):
+    protected, _ = is_protected(path, running={})
+    assert protected  # default: still protected
+    protected, _ = is_protected(path, running={}, allow_user_content=True)
+    assert not protected  # explicit user selection may delete Soft-Protected content
+
+
+@pytest.mark.parametrize("path", [
+    HOME / "Library" / "Keychains" / "login.keychain-db",
+    HOME / "Library" / "Mail" / "V10",
+    HOME / ".ssh" / "id_ed25519",
+    HOME / ".gnupg" / "private-keys-v1.d",
+    HOME / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "f",
+    Path("/System/Library/CoreServices"),
+])
+def test_hard_protected_never_yields(path):
+    protected, _ = is_protected(path, running={}, allow_user_content=True)
+    assert protected
+
+
+def test_photoslibrary_and_trash_never_yield(tmp_path):
+    lib = tmp_path / "P.photoslibrary" / "db"
+    lib.mkdir(parents=True)
+    assert is_protected(lib, running={}, allow_user_content=True)[0]
+    assert is_protected(HOME / ".Trash" / "x", running={}, allow_user_content=True)[0]
+
+
+def test_photoslibrary_inside_soft_dir_never_yields():
+    lib = HOME / "Pictures" / "Family.photoslibrary" / "database"
+    protected, reason = is_protected(lib, running={}, allow_user_content=True)
+    assert protected
+    assert "Photos" in reason
+
+
+def test_in_use_still_applies_to_user_selected(tmp_path):
+    p = HOME / "Library" / "Caches" / "com.example.app" / "big.bin"
+    protected, reason = is_protected(
+        p, running={"com.example.app": "Example"}, allow_user_content=True
+    )
+    assert protected
+    assert reason == "Example is running"
+
+
 def test_symlink_escape_caught(tmp_path):
     # a symlink inside a "cache" dir pointing into ~/Documents must be protected
     target = HOME / "Documents"
@@ -125,3 +173,18 @@ def test_not_protected_when_owner_quit():
     p = HOME / "Library" / "Caches" / "com.tinyspeck.slackmacgap" / "Cache"
     protected, _ = is_protected(p, running={"com.apple.finder": "Finder"})
     assert not protected
+
+
+def test_reasons_name_matched_root():
+    _, reason = is_protected(Path("/System/Library/x"), running={})
+    assert "/System" in reason
+    _, reason = is_protected(HOME / "Documents" / "f.txt", running={})
+    assert "Documents" in reason
+
+
+def test_unresolvable_path_fails_closed(tmp_path):
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop, target_is_directory=True)
+    protected, reason = is_protected(loop / "x", running={})
+    assert protected
+    assert reason

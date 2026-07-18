@@ -1,4 +1,5 @@
 """System data scanner - finds caches, logs, temp files."""
+import fnmatch
 import os
 from pathlib import Path
 from typing import Optional
@@ -6,12 +7,20 @@ from typing import Optional
 from utils.helpers import HOME, get_dir_size, file_age_days
 
 # Safe cache directories to scan
+# /private/var/folders is deliberately excluded: those top-level dirs are
+# live per-user temp roots of running apps, managed by macOS itself. A
+# SAFE-badged bulk clean must not offer live per-user temp roots
+# (decided 2026-07-18).
 CACHE_DIRS = [
     HOME / "Library" / "Caches",
-    Path("/private/var/folders"),
     Path("/tmp"),
     HOME / "tmp",
 ]
+
+# Dirs cheap enough to walk exhaustively for temp-file patterns.
+# Kept as its own name (rather than using CACHE_DIRS directly) because
+# tests monkeypatch TEMP_SCAN_DIRS independently of CACHE_DIRS.
+TEMP_SCAN_DIRS = list(CACHE_DIRS)
 
 # Safe log directories to scan
 LOG_DIRS = [
@@ -109,22 +118,23 @@ def scan_logs(min_age_days: int = 30) -> ScanResult:
 
 
 def scan_temp_files() -> ScanResult:
-    """Scan for temporary files."""
+    """Scan for temporary files. One walk per cache dir; all patterns matched per file."""
     result = ScanResult("temp", "Temporary Files")
-    for cache_dir in CACHE_DIRS:
+    for cache_dir in TEMP_SCAN_DIRS:
         if not cache_dir.exists():
             continue
         try:
-            for pattern in TEMP_PATTERNS:
-                for item in cache_dir.rglob(pattern):
-                    if item.is_file():
-                        try:
-                            result.add_file(
-                                str(item), item.stat().st_size,
-                                file_age_days(item)
-                            )
-                        except (OSError, PermissionError):
-                            pass
+            for item in cache_dir.rglob("*"):
+                if not item.is_file():
+                    continue
+                name = item.name
+                if not any(fnmatch.fnmatch(name, pat) for pat in TEMP_PATTERNS):
+                    continue
+                try:
+                    result.add_file(str(item), item.stat().st_size,
+                                    file_age_days(item))
+                except (OSError, PermissionError):
+                    pass
         except (OSError, PermissionError):
             pass
     return result

@@ -4,23 +4,8 @@ import scanner.app_remnants
 import cleaner.app_remnants
 import core.deleter as deleter_mod
 from core.deleter import DeleteReport
-from scanner.app_remnants import find_leftovers, get_installed_apps
+from scanner.app_remnants import find_leftovers
 from cleaner.app_remnants import clean_leftovers, uninstall_app
-
-def test_get_installed_apps(tmp_path, monkeypatch):
-    # Mock /Applications path
-    apps_dir = tmp_path / "Applications"
-    apps_dir.mkdir()
-    
-    app1 = apps_dir / "TestApp.app"
-    app1.mkdir()
-    (app1 / "Info.plist").write_bytes(b"plist data")
-    
-    monkeypatch.setattr(scanner.app_remnants, "Path", lambda path: apps_dir if path == "/Applications" else Path(path))
-    
-    # We can check get_installed_apps works on custom folder by patching
-    # path inside function or mocking Path
-    pass
 
 def test_find_leftovers(tmp_path, monkeypatch):
     # Setup mock leftover directories
@@ -110,3 +95,11 @@ def test_uninstall_app_rejects_path_traversal(tmp_path, monkeypatch):
 def test_clean_leftovers_rejects_path_traversal():
     with pytest.raises(ValueError):
         clean_leftovers("..")
+
+
+def test_uninstall_missing_bundle_returns_empty_report(tmp_path, monkeypatch, no_running_apps):
+    monkeypatch.setattr("cleaner.app_remnants.APPLICATIONS_DIR", tmp_path)
+    monkeypatch.setattr("cleaner.app_remnants.find_leftovers", lambda name: [])
+    result = uninstall_app("GhostApp", dry_run=False)
+    assert result["app"].results == []
+    assert result["app"].category == "app_bundle"

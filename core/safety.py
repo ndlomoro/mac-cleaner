@@ -71,29 +71,42 @@ SYSTEM_EXEMPT = [
     Path("/usr/local"),
 ]
 
-# Tier 2: user-data trees (children included)
-USER_PROTECTED = [
-    HOME / "Documents",
-    HOME / "Desktop",
-    HOME / "Pictures",
+# Tier 2a: hard-protected user data (children included) - never deletable
+HARD_PROTECTED = [
     HOME / "Library" / "Keychains",
     HOME / "Library" / "Mail",
-    HOME / "Mobile Documents",            # just in case
     HOME / "Library" / "Mobile Documents",  # iCloud Drive
     HOME / ".ssh",
     HOME / ".gnupg",
 ]
 
+# Tier 2b: soft-protected user content - immune to bulk cleaning, but an
+# explicitly user-selected pick flow may Trash items here (see CONTEXT.md)
+SOFT_PROTECTED = [
+    HOME / "Documents",
+    HOME / "Desktop",
+    HOME / "Pictures",
+]
 
-def _under_any(path: Path, roots: list[Path]) -> bool:
-    return any(path == r or path.is_relative_to(r) for r in roots)
+
+def _match_root(path: Path, roots: list[Path]) -> Path | None:
+    for r in roots:
+        if path == r or path.is_relative_to(r):
+            return r
+    return None
 
 
-def is_protected(path: Path, running: dict[str, str] | None = None) -> tuple[bool, str]:
+def is_protected(path: Path, running: dict[str, str] | None = None,
+                 allow_user_content: bool = False) -> tuple[bool, str]:
     """Return (protected, reason). reason is '' when not protected.
 
     `running` maps bundle-id -> app display name for currently running apps;
     pass {} in tests to disable the live lookup.
+
+    `allow_user_content` lets an explicit, individually-selected pick flow
+    Trash items under Soft-Protected roots (~/Documents, ~/Desktop,
+    ~/Pictures). It never overrides Hard-Protected locations, system paths,
+    Photos libraries, or the Trash itself.
     """
     try:
         resolved = path.resolve()
@@ -103,11 +116,18 @@ def is_protected(path: Path, running: dict[str, str] | None = None) -> tuple[boo
     if resolved in EXACT_PROTECTED:
         return True, f"{resolved} is a top-level system location"
 
-    if _under_any(resolved, SYSTEM_PROTECTED) and not _under_any(resolved, SYSTEM_EXEMPT):
-        return True, "macOS system path"
+    system_root = _match_root(resolved, SYSTEM_PROTECTED)
+    if system_root is not None and _match_root(resolved, SYSTEM_EXEMPT) is None:
+        return True, f"macOS system path ({system_root})"
 
-    if _under_any(resolved, USER_PROTECTED):
-        return True, "personal data (protected location)"
+    hard_root = _match_root(resolved, HARD_PROTECTED)
+    if hard_root is not None:
+        return True, f"personal data ({hard_root})"
+
+    if not allow_user_content:
+        soft_root = _match_root(resolved, SOFT_PROTECTED)
+        if soft_root is not None:
+            return True, f"personal data ({soft_root} - use Space Finder to remove individually)"
 
     for part in resolved.parts:
         if part.endswith(".photoslibrary"):

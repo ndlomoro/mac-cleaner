@@ -201,3 +201,19 @@ def test_reclaim_reports_delete_failures(tmp_path, fake_trash, monkeypatch):
     assert result.deleted == 0
     assert result.failed == 1
     assert result.freed_bytes == 0
+
+
+def test_user_selected_unlocks_soft_protected(tmp_path, monkeypatch, fake_trash):
+    # a downloads-category item living under a Soft-Protected dir, dry-run
+    doc = Path.home() / "Documents" / "never-created.bin"
+    report = safe_delete([{"path": str(doc), "size": 5}], "downloads",
+                         dry_run=True, user_selected=True)
+    # soft protection yielded: not skipped-as-protected (it's TRASHED in dry-run;
+    # nonexistence is only checked on real runs)
+    assert len(report.trashed) == 1
+
+
+def test_junk_categories_never_unlock_soft_protection(tmp_path, fake_trash):
+    doc = Path.home() / "Documents" / "never-created.bin"
+    report = safe_delete([{"path": str(doc), "size": 5}], "caches", dry_run=True)
+    assert len(report.skipped) == 1
