@@ -90,10 +90,12 @@ def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
     monkeypatch.setattr("scanner.system_data.CACHE_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.TEMP_SCAN_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.LOG_DIRS", [log_dir])
+    monkeypatch.setattr("scanner.mail_junk.MAIL_DOWNLOAD_DIRS", [tmp_path / "no-mail-downloads"])
+    monkeypatch.setattr("scanner.mail_junk.MAIL_CACHE_DIRS", [tmp_path / "no-mail-cache"])
     results = scan_all(min_cache_age=0, min_log_age=0)
     categories = {r.category for r in results}
     assert categories
-    assert categories <= {"caches", "logs", "temp"}
+    assert categories <= {"caches", "logs", "temp", "mail_downloads", "mail_cache"}
 
 
 def test_scan_temp_files_single_walk(monkeypatch, tmp_path):

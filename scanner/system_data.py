@@ -174,11 +174,14 @@ def scan_ios_backups() -> ScanResult:
 
 def scan_all(min_cache_age: int = 7, min_log_age: int = 30) -> list[ScanResult]:
     """Run all Junk scans. Never returns user-data categories (see /CONTEXT.md)."""
+    from scanner.mail_junk import scan_mail_junk
+
     results = [
         scan_caches(min_cache_age),
         scan_logs(min_log_age),
         scan_temp_files(),
     ]
+    results.extend(scan_mail_junk())
     return [r for r in results if r.file_count > 0]
 
 
