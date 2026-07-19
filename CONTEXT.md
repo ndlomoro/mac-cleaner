@@ -34,6 +34,10 @@ _Avoid_: semi-protected
 **Keep-One Invariant**:
 In any group of duplicate files, at least one copy can never be selected for removal. Enforced by the interface, not left to the user's care.
 
+**Keeper**:
+The copy of a duplicate group the app suggests keeping — marked ★, never auto-selected for removal.
+_Avoid_: original, master
+
 **Safety Level**:
 How loudly the app warns about a category: SAFE, CAUTION, or RISKY. Describes the consequence of deletion; it does not by itself permit or forbid anything.
 _Avoid_: severity, risk score

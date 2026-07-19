@@ -67,8 +67,19 @@ items individually and Trash them with `t`:
   `Manifest.db` (the encrypted-backup internals), so backup integrity is
   never at risk.
 - **Large Files** - individually large files anywhere on disk.
-- **Duplicates** - extra copies of identical files; one copy of each set is
-  always kept automatically, you choose which of the rest go.
+- **Duplicates** - extra copies of identical files, found via a three-stage
+  scan (group by size, then by a cheap first-64KB partial hash, then a
+  full-content hash - so the expensive full hash only ever runs on files
+  that already agree on size and on their first 64KB) so large trees scan
+  fast. Only files at least 1MB are considered; nothing smaller is worth
+  the hashing cost. Within each group the app suggests a **Keeper** - the
+  copy it'd keep, marked `★ keep` in the row - chosen by preferring a
+  canonical location (Pictures/Documents/Movies/Music over scratch space
+  like Downloads/Desktop), then a shallower path, then the older copy.
+  The Keeper is never auto-selected for removal; press `k` to select every
+  non-keeper row across all groups in one keystroke, or pick rows
+  individually - either way, nothing is ever pre-selected and the Keep-One
+  Invariant means at least one copy per group can never go.
 
 ## Dev Junk (key 7)
 
