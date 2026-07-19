@@ -48,5 +48,14 @@ def test_all_cleaner_categories_registered():
         "xcode_derived_data", "cocoapods_cache", "pip_cache",
         "brew_cleanup", "npm_cache", "snapshots",
         "project_artifacts", "docker_junk", "ios_simulators",
+        "mail_downloads", "mail_cache",
     ]:
         assert key in REGISTRY
+
+
+def test_mail_categories_are_safe_and_via_trash():
+    for key in ("mail_downloads", "mail_cache"):
+        cat = REGISTRY[key]
+        assert cat.level is Level.SAFE
+        assert cat.via_trash is True
+        assert cat.user_data is False

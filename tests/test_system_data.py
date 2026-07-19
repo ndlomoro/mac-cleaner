@@ -1,8 +1,13 @@
+import os
+import time
+
 import pytest
 from pathlib import Path
 import scanner.system_data
 import cleaner.system_data
-from scanner.system_data import ScanResult, scan_all, scan_downloads, scan_space_finder
+from scanner.system_data import (
+    ScanResult, scan_all, scan_caches, scan_downloads, scan_space_finder,
+)
 import core.deleter as deleter_mod
 from cleaner.system_data import clean_files, clean_system_data
 
@@ -90,10 +95,12 @@ def test_scan_all_returns_only_junk_categories(monkeypatch, tmp_path):
     monkeypatch.setattr("scanner.system_data.CACHE_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.TEMP_SCAN_DIRS", [cache_dir])
     monkeypatch.setattr("scanner.system_data.LOG_DIRS", [log_dir])
+    monkeypatch.setattr("scanner.mail_junk.MAIL_DOWNLOAD_DIRS", [tmp_path / "no-mail-downloads"])
+    monkeypatch.setattr("scanner.mail_junk.MAIL_CACHE_DIRS", [tmp_path / "no-mail-cache"])
     results = scan_all(min_cache_age=0, min_log_age=0)
     categories = {r.category for r in results}
     assert categories
-    assert categories <= {"caches", "logs", "temp"}
+    assert categories <= {"caches", "logs", "temp", "mail_downloads", "mail_cache"}
 
 
 def test_scan_temp_files_single_walk(monkeypatch, tmp_path):
@@ -131,6 +138,27 @@ def test_scan_downloads_has_no_age_filter(monkeypatch, tmp_path):
     assert result.category == "downloads"
     paths = [f["path"] for f in result.files]
     assert str(fresh) in paths  # brand-new file IS listed; age is a signal, not a filter
+
+
+def test_scan_caches_excludes_mail_owned_dir(monkeypatch, tmp_path):
+    # com.apple.mail is owned by mail_cache (scanner/mail_junk.py); scan_caches
+    # must not also emit it as a top-level row, or scan_all double-counts the
+    # same bytes and bulk Clean trashes the parent before mail_cache's
+    # children get a chance to report SKIPPED.
+    cache_dir = tmp_path / "Caches"
+    mail_dir = cache_dir / "com.apple.mail"
+    mail_dir.mkdir(parents=True)
+    (mail_dir / "f").write_bytes(b"x" * 100)
+    other_dir = cache_dir / "com.other.app"
+    other_dir.mkdir()
+    (other_dir / "f").write_bytes(b"y" * 100)
+    old = time.time() - 8 * 86400
+    for d in (mail_dir, other_dir):
+        os.utime(d, (old, old))
+    monkeypatch.setattr("scanner.system_data.CACHE_DIRS", [cache_dir])
+    result = scan_caches(min_age_days=7)
+    paths = {f["path"] for f in result.files}
+    assert paths == {str(other_dir)}
 
 
 def test_scan_space_finder_categories(monkeypatch, tmp_path):

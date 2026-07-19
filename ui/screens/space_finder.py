@@ -24,6 +24,27 @@ from utils.helpers import format_size
 TABS = ("downloads", "ios_backups", "large_files", "duplicates")
 
 
+def _row_label(category: str, item: dict) -> str:
+    """Build a SelectionList option label for one scanned row.
+
+    ios_backups rows carrying a device_name get a device/staleness label;
+    everything else (including metadata-less ios_backups rows) keeps the
+    generic size/age/path label.
+    """
+    age = f"{item.get('age_days', 0):>4.0f}"
+    if category == "ios_backups" and item.get("device_name") is not None:
+        label = (f"{format_size(item['size']):>10}  {age}d since backup  "
+                 f"{item['device_name']}")
+        if item.get("ios_version") is not None:
+            label += f" (iOS {item['ios_version']})"
+        # Two devices can share a display name (reset-and-repaired, or two
+        # phones the user named the same) - the path tail is what makes
+        # otherwise-identical rows distinguishable (dev_junk convention).
+        label += f"  [dim]…{item['path'][-40:]}[/dim]"
+        return label
+    return f"{format_size(item['size']):>10}  {age}d  …{item['path'][-70:]}"
+
+
 class SpaceFinderScreen(Screen):
     BINDINGS = [
         ("escape", "app.pop_screen", "Back"),
@@ -89,8 +110,7 @@ class SpaceFinderScreen(Screen):
         sel = self.query_one(f"#list-{category}", SelectionList)
         for i, item in enumerate(rows):
             self.items[category][i] = item
-            age = f"{item.get('age_days', 0):>4.0f}d"
-            label = f"{format_size(item['size']):>10}  {age}  …{item['path'][-70:]}"
+            label = _row_label(category, item)
             sel.add_option(Selection(label, i, initial_state=False))
         # Options added after mount don't auto-highlight (unlike options passed
         # at construction time); without this, space/enter do nothing until the

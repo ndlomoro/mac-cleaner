@@ -10,7 +10,7 @@ from scanner.large_files import LargeFile
 from scanner.system_data import ScanResult
 from ui.app import CleanerApp
 from ui.screens import space_finder as sf_mod
-from ui.screens.space_finder import SpaceFinderScreen
+from ui.screens.space_finder import SpaceFinderScreen, _row_label
 from ui.widgets.gates import ConfirmModal
 from utils.helpers import format_size
 
@@ -316,6 +316,80 @@ async def test_large_files_route_through_clean_large_files(tmp_path, monkeypatch
 
     assert clean_calls == [[str(lf_file)]]
     assert safe_delete_calls == ["downloads"]
+
+
+def test_row_label_enriched_ios_with_version():
+    item = {"path": "/x", "size": 1234, "age_days": 5,
+            "device_name": "Nick's iPhone", "ios_version": "17.4"}
+    label = _row_label("ios_backups", item)
+    assert "since backup" in label
+    assert "Nick's iPhone" in label
+    assert "(iOS 17.4)" in label
+    assert "…/x" in label
+
+
+def test_row_label_enriched_ios_without_version():
+    item = {"path": "/x", "size": 1234, "age_days": 5,
+            "device_name": "Nick's iPhone", "ios_version": None}
+    label = _row_label("ios_backups", item)
+    assert "since backup" in label
+    assert "Nick's iPhone" in label
+    assert "(iOS" not in label
+    assert "…/x" in label
+
+
+def test_row_label_enriched_same_device_name_distinguishable_by_path():
+    # Two backups from devices sharing a display name (reset-and-repaired,
+    # or two phones the user happened to name the same) must not render
+    # identical labels - the path tail is what tells them apart.
+    item_a = {"path": "/Users/x/MobileSync/Backup/AAAA", "size": 1234,
+              "age_days": 5, "device_name": "iPhone", "ios_version": "17.4"}
+    item_b = {"path": "/Users/x/MobileSync/Backup/BBBB", "size": 1234,
+              "age_days": 5, "device_name": "iPhone", "ios_version": "17.4"}
+    assert _row_label("ios_backups", item_a) != _row_label("ios_backups", item_b)
+
+
+def test_row_label_generic_for_metadata_less_ios_row():
+    item = {"path": "/some/path/backup-uuid", "size": 1234, "age_days": 5,
+            "device_name": None, "ios_version": None}
+    label = _row_label("ios_backups", item)
+    assert "since backup" not in label
+    assert label == _row_label("downloads", {**item})
+
+
+async def test_ios_backup_rows_show_device_and_staleness(
+        tmp_path, monkeypatch, fake_trash):
+    """Pilot test: an enriched iOS row (device_name set) renders the
+    device/staleness label; a metadata-less row keeps the generic form."""
+    dl = ScanResult("downloads", "Downloads")
+    ios = ScanResult("ios_backups", "iOS Backups")
+    enriched = tmp_path / "00008030-enriched"
+    ios.add_file(str(enriched), 5_000_000, 3)
+    ios.files[-1]["device_name"] = "Nick's iPhone"
+    ios.files[-1]["ios_version"] = "17.4"
+    plain = tmp_path / "00008030-plain"
+    ios.add_file(str(plain), 3_000_000, 9)
+    ios.files[-1]["device_name"] = None
+    ios.files[-1]["ios_version"] = None
+
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder",
+                        lambda: [dl, ios])
+    monkeypatch.setattr("ui.screens.space_finder.find_large_files",
+                        lambda **kw: [])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates",
+                        lambda **kw: [])
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        sel = host.screen.query_one("#list-ios_backups", SelectionList)
+        enriched_label = str(sel.get_option_at_index(0).prompt)
+        plain_label = str(sel.get_option_at_index(1).prompt)
+        assert "since backup" in enriched_label
+        assert "Nick's iPhone" in enriched_label
+        assert f"…{str(enriched)[-40:]}" in enriched_label
+        assert "since backup" not in plain_label
+        assert f"…{str(plain)[-70:]}" in plain_label
 
 
 async def test_large_files_tab_real_clean_large_files_lands_in_trash(

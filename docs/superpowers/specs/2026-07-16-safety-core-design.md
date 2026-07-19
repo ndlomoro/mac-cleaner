@@ -78,6 +78,8 @@ Initial assignments:
 |---|---|---|---|
 | caches, logs, temp | SAFE | – | ✓ |
 | browser_cache | SAFE | – | ✓ |
+| mail_downloads | SAFE | – | ✓ |
+| mail_cache | SAFE | – | ✓ |
 | xcode_derived_data, cocoapods_cache, pip_cache | SAFE | – | ✓ |
 | brew_cleanup, npm_cache | SAFE | – | ✗ (external tool) |
 | app_bundle | CAUTION | – | ✓ |

@@ -175,6 +175,27 @@ def test_not_protected_when_owner_quit():
     assert not protected
 
 
+def test_container_mail_downloads_protected_when_mail_running():
+    # Container Mail Downloads dir doesn't self-identify its owner (no
+    # reverse-DNS bundle-id path segment under Caches like other apps) -
+    # it needs its own KNOWN_OWNERS entry so a running Mail.app still
+    # blocks a bulk clean of it, same as other owner-mapped paths.
+    p = (HOME / "Library" / "Containers" / "com.apple.mail" / "Data"
+         / "Library" / "Mail Downloads" / "attachment.pdf")
+    protected, reason = is_protected(
+        p, running={"com.apple.mail": "Mail"}
+    )
+    assert protected
+    assert reason == "Mail is running"
+
+
+def test_container_mail_downloads_not_protected_when_mail_not_running():
+    p = (HOME / "Library" / "Containers" / "com.apple.mail" / "Data"
+         / "Library" / "Mail Downloads" / "attachment.pdf")
+    protected, _ = is_protected(p, running={})
+    assert not protected
+
+
 def test_reasons_name_matched_root():
     _, reason = is_protected(Path("/System/Library/x"), running={})
     assert "/System" in reason
