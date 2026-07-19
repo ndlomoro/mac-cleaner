@@ -5,6 +5,7 @@ from textual.app import App
 from textual.widgets import SelectionList, Static
 
 import cleaner.large_files as large_files_mod
+import scanner.duplicates as duplicates_mod
 from core.deleter import DeleteReport
 from scanner.large_files import LargeFile
 from scanner.system_data import ScanResult
@@ -13,6 +14,32 @@ from ui.screens import space_finder as sf_mod
 from ui.screens.space_finder import SpaceFinderScreen, _row_label
 from ui.widgets.gates import ConfirmModal
 from utils.helpers import format_size
+
+
+def _make_dup_groups(monkeypatch, canon_dir, other_dir):
+    """Build two duplicate groups whose keepers are deterministic: each
+    group's designated keeper file lives under canon_dir (monkeypatched onto
+    CANONICAL_DIRS), every other copy lives under other_dir - so pick_keeper's
+    first tie-break tier (canonical location) decides the winner regardless
+    of mtime/lexicographic ordering.
+
+    Returns (groups, keeper_paths) where keeper_paths is the set of the two
+    designated-keeper absolute path strings.
+    """
+    monkeypatch.setattr(duplicates_mod, "CANONICAL_DIRS", [canon_dir])
+    g1_keep = canon_dir / "g1_keep.jpg"; g1_keep.write_bytes(b"1111")
+    g1_dupe = other_dir / "g1_dupe.jpg"; g1_dupe.write_bytes(b"1111")
+    g2_keep = canon_dir / "g2_keep.jpg"; g2_keep.write_bytes(b"2222")
+    g2_dupe1 = other_dir / "g2_dupe1.jpg"; g2_dupe1.write_bytes(b"2222")
+    g2_dupe2 = other_dir / "g2_dupe2.jpg"; g2_dupe2.write_bytes(b"2222")
+    groups = [
+        {"hash": "h1", "size": 4, "files": [str(g1_keep), str(g1_dupe)],
+         "wasted": 4},
+        {"hash": "h2", "size": 4,
+         "files": [str(g2_keep), str(g2_dupe1), str(g2_dupe2)], "wasted": 8},
+    ]
+    keeper_paths = {str(g1_keep), str(g2_keep)}
+    return groups, keeper_paths
 
 
 class Host(App):
@@ -213,6 +240,146 @@ async def test_cross_tab_keep_one_enforced_via_large_files(
         assert b.exists()
 
 
+async def test_k_selects_exactly_non_keeper_indexes(tmp_path, monkeypatch, fake_trash):
+    """(a) Nothing is pre-selected after scan; pressing k selects exactly the
+    non-keeper rows across every duplicate group, never a keeper row."""
+    canon_dir = tmp_path / "canon"; canon_dir.mkdir()
+    other_dir = tmp_path / "other"; other_dir.mkdir()
+    groups, keeper_paths = _make_dup_groups(monkeypatch, canon_dir, other_dir)
+
+    dl = ScanResult("downloads", "Downloads")
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr("ui.screens.space_finder.find_large_files", lambda **kw: [])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates", lambda **kw: groups)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        dup_list = host.screen.query_one("#list-duplicates", SelectionList)
+        assert dup_list.selected == []  # nothing pre-selected after scan
+
+        dup_list.focus()
+        await pilot.press("k")
+        await pilot.pause()
+
+        items = host.screen.items["duplicates"]
+        expected = {i for i, it in items.items() if it["path"] != it["keeper"]}
+        assert set(dup_list.selected) == expected
+        selected_paths = {items[i]["path"] for i in dup_list.selected}
+        assert not (selected_paths & keeper_paths)  # keeper never selected
+
+        # ★ badge renders only for the keeper row of each group
+        for i, it in items.items():
+            label = str(dup_list.get_option_at_index(i).prompt)
+            if it["path"] in keeper_paths:
+                assert label.startswith("★ keep")
+            else:
+                assert not label.startswith("★ keep")
+
+
+async def test_k_then_trash_keepers_survive(tmp_path, monkeypatch, fake_trash):
+    """(b) k then t -> confirm: keepers survive on disk, non-keepers land in
+    the (fake) Trash."""
+    canon_dir = tmp_path / "canon"; canon_dir.mkdir()
+    other_dir = tmp_path / "other"; other_dir.mkdir()
+    groups, keeper_paths = _make_dup_groups(monkeypatch, canon_dir, other_dir)
+    all_paths = {p for g in groups for p in g["files"]}
+    non_keeper_paths = all_paths - keeper_paths
+
+    dl = ScanResult("downloads", "Downloads")
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr("ui.screens.space_finder.find_large_files", lambda **kw: [])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates", lambda **kw: groups)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        dup_list = host.screen.query_one("#list-duplicates", SelectionList)
+        dup_list.focus()
+        await pilot.press("k")
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.click("#confirm")
+        await pilot.pause()
+
+        for p in keeper_paths:
+            from pathlib import Path as P
+            assert P(p).exists()
+        for p in non_keeper_paths:
+            from pathlib import Path as P
+            assert not P(p).exists()
+            assert (fake_trash / P(p).name).exists()
+
+        # decline the reclaim offer, parity with the other trash-flow tests
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_k_with_no_duplicates_notifies(tmp_path, monkeypatch, fake_trash):
+    """(c) k with zero duplicate groups notifies "No duplicates found." and
+    selects nothing anywhere."""
+    _patch_scanners(monkeypatch, tmp_path)  # default: no dup_paths -> [] groups
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        notifications = []
+        host.screen.notify = lambda msg, **kw: notifications.append(
+            (msg, kw.get("severity")))
+
+        dup_list = host.screen.query_one("#list-duplicates", SelectionList)
+        dup_list.focus()
+        await pilot.press("k")
+        await pilot.pause()
+
+        assert any(msg == "No duplicates found." for msg, _ in notifications)
+        for sl in host.screen.query(SelectionList):
+            assert sl.selected == []
+
+
+async def test_manual_select_after_k_still_keep_one_enforced(
+        tmp_path, monkeypatch, fake_trash):
+    """(d) explicit sequence: after k, manually trying to also select the
+    keeper (which would leave zero copies of that group unselected) is still
+    refused by the existing Keep-One handler - no regression from adding k."""
+    canon_dir = tmp_path / "canon"; canon_dir.mkdir()
+    other_dir = tmp_path / "other"; other_dir.mkdir()
+    monkeypatch.setattr(duplicates_mod, "CANONICAL_DIRS", [canon_dir])
+    keep = canon_dir / "keep.jpg"; keep.write_bytes(b"1234")
+    dupe = other_dir / "dupe.jpg"; dupe.write_bytes(b"1234")
+    groups = [{"hash": "h1", "size": 4, "files": [str(keep), str(dupe)],
+               "wasted": 4}]
+
+    dl = ScanResult("downloads", "Downloads")
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr("ui.screens.space_finder.find_large_files", lambda **kw: [])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates", lambda **kw: groups)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        notifications = []
+        host.screen.notify = lambda msg, **kw: notifications.append(
+            (msg, kw.get("severity")))
+
+        dup_list = host.screen.query_one("#list-duplicates", SelectionList)
+        dup_list.focus()
+        await pilot.press("k")
+        await pilot.pause()
+        assert len(dup_list.selected) == 1  # just the non-keeper (dupe)
+
+        # find the keeper's option index and manually try to select it too
+        items = host.screen.items["duplicates"]
+        keeper_index = next(i for i, it in items.items()
+                             if it["path"] == it["keeper"])
+        dup_list.select(keeper_index)
+        await pilot.pause()
+
+        assert len(dup_list.selected) == 1  # still one copy always kept
+        assert any("One copy of each duplicate is always kept" in msg
+                   for msg, _ in notifications)
+
+
 async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, fake_trash):
     """Critical busy-coverage gap: the trash/reclaim flow never touched
     _scanning, so navigating away and back while safe_delete was still
@@ -355,6 +522,17 @@ def test_row_label_generic_for_metadata_less_ios_row():
     label = _row_label("ios_backups", item)
     assert "since backup" not in label
     assert label == _row_label("downloads", {**item})
+
+
+def test_row_label_duplicates_keeper_badge():
+    keeper_item = {"path": "/a", "size": 1234, "age_days": 5, "keeper": "/a"}
+    other_item = {"path": "/b", "size": 1234, "age_days": 5, "keeper": "/a"}
+    keeper_label = _row_label("duplicates", keeper_item)
+    other_label = _row_label("duplicates", other_item)
+    assert keeper_label.startswith("★ keep")
+    assert not other_label.startswith("★ keep")
+    # non-duplicates categories are unaffected by the "keeper" key
+    assert not _row_label("downloads", keeper_item).startswith("★ keep")
 
 
 async def test_ios_backup_rows_show_device_and_staleness(
