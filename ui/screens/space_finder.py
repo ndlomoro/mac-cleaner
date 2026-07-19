@@ -275,12 +275,34 @@ class SpaceFinderScreen(Screen):
                        reports: list[DeleteReport]) -> None:
         # Only drop paths safe_delete actually TRASHED - skipped (hard-protected,
         # running app, vanished) and failed items must stay listed and
-        # re-selectable, matching what ReportView reports.
+        # re-selectable, matching what ReportView reports. Reconcile every
+        # tab affected by trashed_paths, not just the ones the user picked
+        # from directly - a duplicate's copy can be trashed via a DIFFERENT
+        # tab (e.g. the keeper picked from Large Files), which would
+        # otherwise leave the Duplicates tab listing a path that no longer
+        # exists and stamped with a now-dead "keeper".
         trashed_paths = {r.path for report in reports for r in report.trashed}
-        for key in picked:
-            sel = self.query_one(f"#list-{key}", SelectionList)
+        affected = set(picked) | {
+            key for key in TABS
+            if any(it["path"] in trashed_paths
+                   for it in self.items[key].values())
+        }
+        for key in affected:
             keep = {i: it for i, it in self.items[key].items()
                     if it["path"] not in trashed_paths}
+            if key == "duplicates":
+                # Restamp keepers for every remaining group - trashing a
+                # keeper (from any tab) means one of the survivors must take
+                # over the ★, and a group reduced to a single row keeps that
+                # row stamped as its own keeper (correctly unselectable by k).
+                by_group: dict[str, list[dict]] = {}
+                for it in keep.values():
+                    by_group.setdefault(it["group"], []).append(it)
+                for members in by_group.values():
+                    keeper = pick_keeper([m["path"] for m in members])
+                    for m in members:
+                        m["keeper"] = keeper
+            sel = self.query_one(f"#list-{key}", SelectionList)
             sel.clear_options()
             self.items[key] = {}
             self._fill(key, list(keep.values()))

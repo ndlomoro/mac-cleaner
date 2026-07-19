@@ -380,6 +380,126 @@ async def test_manual_select_after_k_still_keep_one_enforced(
                    for msg, _ in notifications)
 
 
+async def test_cross_tab_trash_reconciles_duplicates_tab_and_restamps_keeper(
+        tmp_path, monkeypatch, fake_trash):
+    """(a) A two-copy duplicate group is visible in BOTH the Duplicates and
+    Large Files tabs. Trashing the KEEPER's row via Large Files only must
+    still reconcile the Duplicates tab: the trashed path drops out of it, and
+    the surviving copy is restamped as its own keeper (★) - not left pointing
+    at a keeper that no longer exists."""
+    canon_dir = tmp_path / "canon"; canon_dir.mkdir()
+    other_dir = tmp_path / "other"; other_dir.mkdir()
+    monkeypatch.setattr(duplicates_mod, "CANONICAL_DIRS", [canon_dir])
+    keeper = canon_dir / "keep.jpg"; keeper.write_bytes(b"1234")
+    dupe = other_dir / "dupe.jpg"; dupe.write_bytes(b"1234")
+    groups = [{"hash": "h1", "size": 4, "files": [str(keeper), str(dupe)],
+               "wasted": 4}]
+
+    dl = ScanResult("downloads", "Downloads")
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr(
+        "ui.screens.space_finder.find_large_files",
+        lambda **kw: [LargeFile(str(keeper), 4, 0), LargeFile(str(dupe), 4, 0)])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates",
+                        lambda **kw: groups)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        # host.screen is only the SpaceFinderScreen while it's the top of the
+        # stack - a reclaim gate gets pushed on top the moment trashing
+        # succeeds, so grab a stable reference to the screen itself up front.
+        sf_screen = host.screen
+        dup_list = sf_screen.query_one("#list-duplicates", SelectionList)
+
+        # sanity: keeper is stamped/badged before any trashing happens
+        items = sf_screen.items["duplicates"]
+        keeper_index = next(i for i, it in items.items()
+                             if it["path"] == str(keeper))
+        assert items[keeper_index]["keeper"] == str(keeper)
+
+        # select the KEEPER's row via Large Files only (index 0 there)
+        lf_list = sf_screen.query_one("#list-large_files", SelectionList)
+        lf_list.focus()
+        await pilot.press("space")
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.click("#confirm")
+        await pilot.pause()
+
+        assert not keeper.exists()
+        assert (fake_trash / keeper.name).exists()
+        assert dupe.exists()  # untouched - only the keeper was picked
+
+        # Duplicates tab reconciled: trashed path gone, survivor restamped
+        remaining = sf_screen.items["duplicates"]
+        assert len(remaining) == 1
+        survivor_i, survivor = next(iter(remaining.items()))
+        assert survivor["path"] == str(dupe)
+        assert survivor["keeper"] == str(dupe)  # restamped as its own keeper
+        label = str(dup_list.get_option_at_index(survivor_i).prompt)
+        assert label.startswith("★ keep")
+
+        # decline the reclaim offer, parity with the other trash-flow tests
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_k_after_cross_tab_trash_selects_nothing_and_t_notifies(
+        tmp_path, monkeypatch, fake_trash):
+    """(b) Continuation of the cross-tab scenario above: once the group is
+    down to a single (self-)keeper survivor, k must select nothing for it,
+    and a follow-up t with nothing selected anywhere must simply notify
+    "Nothing selected." - no trash of the survivor is reachable via k->t."""
+    canon_dir = tmp_path / "canon"; canon_dir.mkdir()
+    other_dir = tmp_path / "other"; other_dir.mkdir()
+    monkeypatch.setattr(duplicates_mod, "CANONICAL_DIRS", [canon_dir])
+    keeper = canon_dir / "keep.jpg"; keeper.write_bytes(b"1234")
+    dupe = other_dir / "dupe.jpg"; dupe.write_bytes(b"1234")
+    groups = [{"hash": "h1", "size": 4, "files": [str(keeper), str(dupe)],
+               "wasted": 4}]
+
+    dl = ScanResult("downloads", "Downloads")
+    monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
+    monkeypatch.setattr(
+        "ui.screens.space_finder.find_large_files",
+        lambda **kw: [LargeFile(str(keeper), 4, 0), LargeFile(str(dupe), 4, 0)])
+    monkeypatch.setattr("ui.screens.space_finder.find_duplicates",
+                        lambda **kw: groups)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        lf_list = host.screen.query_one("#list-large_files", SelectionList)
+        lf_list.focus()
+        await pilot.press("space")   # keeper's row via Large Files
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.click("#confirm")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.press("escape")  # decline reclaim offer
+        await pilot.pause()
+
+        notifications = []
+        host.screen.notify = lambda msg, **kw: notifications.append(
+            (msg, kw.get("severity")))
+
+        dup_list = host.screen.query_one("#list-duplicates", SelectionList)
+        dup_list.focus()
+        await pilot.press("k")
+        await pilot.pause()
+        assert dup_list.selected == []  # sole survivor is its own keeper
+
+        for sl in host.screen.query(SelectionList):
+            assert sl.selected == []
+        await pilot.press("t")
+        await pilot.pause()
+        assert any(msg == "Nothing selected." for msg, _ in notifications)
+        assert dupe.exists()  # survivor was never trashed via k->t
+
+
 async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, fake_trash):
     """Critical busy-coverage gap: the trash/reclaim flow never touched
     _scanning, so navigating away and back while safe_delete was still
