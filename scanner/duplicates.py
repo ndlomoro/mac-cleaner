@@ -3,7 +3,7 @@ import hashlib
 from pathlib import Path
 from collections import defaultdict
 
-from utils.helpers import HOME
+from utils.helpers import HOME, file_age_days
 
 # Directories to scan for duplicates
 SCAN_DIRS = [
@@ -11,6 +11,16 @@ SCAN_DIRS = [
     HOME / "Downloads",
     HOME / "Desktop",
     HOME / "Pictures",
+    HOME / "Movies",
+    HOME / "Music",
+]
+
+# Directories whose contents are preferred as the "keeper" copy of a
+# duplicate group - user-curated locations rather than scratch space like
+# Downloads or Desktop.
+CANONICAL_DIRS = [
+    HOME / "Pictures",
+    HOME / "Documents",
     HOME / "Movies",
     HOME / "Music",
 ]
@@ -122,3 +132,31 @@ def find_duplicates(min_size_bytes: int = 1_000_000) -> list[dict]:
     # Sort by wasted space descending
     duplicates.sort(key=lambda x: x["wasted"], reverse=True)
     return duplicates
+
+
+def _is_canonical(path: Path) -> bool:
+    """True if `path` sits under any CANONICAL_DIRS entry (no filesystem access)."""
+    return any(path.is_relative_to(d) for d in CANONICAL_DIRS)
+
+
+def pick_keeper(paths: list[str]) -> str:
+    """Pick which copy of a duplicate group to KEEP.
+
+    Preference order (most-preferred first):
+      1. Path is under a CANONICAL_DIRS location.
+      2. Fewer path components (shallower).
+      3. Older mtime (larger file_age_days wins) - missing files count as
+         age 0 and never raise.
+      4. Lexicographic order, as a final total order.
+    """
+    if not paths:
+        raise ValueError("pick_keeper requires at least one path")
+
+    def sort_key(p: str) -> tuple:
+        path = Path(p)
+        canonical = 0 if _is_canonical(path) else 1
+        depth = len(path.parts)
+        age = file_age_days(path)
+        return (canonical, depth, -age, p)
+
+    return min(paths, key=sort_key)

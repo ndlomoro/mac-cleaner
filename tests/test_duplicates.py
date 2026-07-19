@@ -1,7 +1,9 @@
+import os
+import time
 import pytest
 from pathlib import Path
 import scanner.duplicates
-from scanner.duplicates import find_duplicates, _file_hash, _partial_hash
+from scanner.duplicates import find_duplicates, _file_hash, _partial_hash, pick_keeper
 
 def test_file_hash(tmp_path):
     file1 = tmp_path / "file1.bin"
@@ -191,3 +193,76 @@ def test_find_duplicates_1mb_floor_boundary(tmp_path, monkeypatch):
     assert str(at_floor2) in dup_group["files"]
     assert str(below) not in dup_group["files"]
     assert str(below2) not in dup_group["files"]
+
+
+@pytest.fixture
+def canonical_pictures(tmp_path, monkeypatch):
+    """Point CANONICAL_DIRS at a single tmp_path/Pictures dir for isolation."""
+    pictures = tmp_path / "Pictures"
+    monkeypatch.setattr(scanner.duplicates, "CANONICAL_DIRS", [pictures])
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "rel_paths, expected_rel",
+    [
+        # canonical-dir membership beats non-membership, even when the
+        # canonical path is much deeper.
+        (
+            ["Downloads/a.bin", "Pictures/deep/nested/much/deeper/b.bin"],
+            "Pictures/deep/nested/much/deeper/b.bin",
+        ),
+        # equal membership (both non-canonical) -> shallower path wins.
+        (["Downloads/a/b/c.bin", "Downloads/d.bin"], "Downloads/d.bin"),
+        # equal membership (both canonical) -> shallower path wins.
+        (["Pictures/a/b/c.bin", "Pictures/d.bin"], "Pictures/d.bin"),
+        # full tie (same membership, same depth, same missing-age) ->
+        # lexicographic order is the final tiebreak.
+        (["Downloads/b.bin", "Downloads/a.bin"], "Downloads/a.bin"),
+    ],
+)
+def test_pick_keeper_table(canonical_pictures, rel_paths, expected_rel):
+    tmp_path = canonical_pictures
+    paths = [str(tmp_path / rel) for rel in rel_paths]
+    expected = str(tmp_path / expected_rel)
+
+    assert pick_keeper(paths) == expected
+
+
+def test_pick_keeper_equal_depth_older_wins(canonical_pictures):
+    tmp_path = canonical_pictures
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    older = downloads / "older.bin"
+    newer = downloads / "newer.bin"
+    older.write_bytes(b"x")
+    newer.write_bytes(b"x")
+
+    now = time.time()
+    os.utime(older, (now - 100_000, now - 100_000))
+    os.utime(newer, (now - 10, now - 10))
+
+    assert pick_keeper([str(newer), str(older)]) == str(older)
+
+
+def test_pick_keeper_missing_file_no_raise(canonical_pictures):
+    tmp_path = canonical_pictures
+    pictures = tmp_path / "Pictures"
+    pictures.mkdir()
+    exists = pictures / "exists.bin"
+    exists.write_bytes(b"x")
+    missing = pictures / "missing.bin"  # never created on disk
+
+    # A missing file must be treated as age 0 (not old) and must never raise.
+    result = pick_keeper([str(exists), str(missing)])
+    assert result == str(exists)
+
+
+def test_pick_keeper_single_element_returns_it(tmp_path):
+    p = str(tmp_path / "solo.bin")
+    assert pick_keeper([p]) == p
+
+
+def test_pick_keeper_empty_raises():
+    with pytest.raises(ValueError):
+        pick_keeper([])
