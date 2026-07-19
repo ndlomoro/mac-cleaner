@@ -35,16 +35,35 @@ def _file_hash(filepath: Path, chunk_size: int = 65536) -> str:
         return ""
 
 
-def find_duplicates(min_size_bytes: int = 10240) -> list[dict]:
+def _partial_hash(filepath: Path, length: int = 65536) -> str:
+    """Compute MD5 hash of exactly the first `length` bytes of a file.
+
+    Used as a cheap pre-filter before the full-file hash: files whose
+    size matches but whose first 64KB differ can't be duplicates, so
+    they never pay for a full read.
     """
-    Find duplicate files by size first, then by content hash.
+    hasher = hashlib.md5()
+    try:
+        with open(filepath, "rb") as f:
+            chunk = f.read(length)
+        hasher.update(chunk)
+        return hasher.hexdigest()
+    except (OSError, PermissionError):
+        return ""
+
+
+def find_duplicates(min_size_bytes: int = 1_000_000) -> list[dict]:
+    """
+    Find duplicate files via three stages: size, then partial (first-64KB)
+    hash, then full-content hash - so full hashing only ever runs on files
+    that already agree on size and on their first 64KB.
     Returns list of groups, each group is a dict with:
-      - hash: the MD5 hash
+      - hash: the full MD5 hash
       - size: file size in bytes
       - files: list of file paths
       - wasted: size * (count - 1)
     """
-    # Phase 1: Group files by size
+    # Stage 1: Group files by size
     size_groups = defaultdict(list)
     for scan_dir in SCAN_DIRS:
         if not scan_dir.exists():
@@ -69,24 +88,36 @@ def find_duplicates(min_size_bytes: int = 10240) -> list[dict]:
         except (OSError, PermissionError):
             pass
 
-    # Phase 2: For size groups with multiple files, check content hash
     duplicates = []
     for size, files in size_groups.items():
         if len(files) < 2:
             continue
-        hash_groups = defaultdict(list)
+
+        # Stage 2: within a size group, pre-filter by first-64KB hash
+        partial_groups = defaultdict(list)
         for f in files:
-            h = _file_hash(f)
-            if h:
-                hash_groups[h].append(str(f))
-        for h, paths in hash_groups.items():
-            if len(paths) >= 2:
-                duplicates.append({
-                    "hash": h,
-                    "size": size,
-                    "files": paths,
-                    "wasted": size * (len(paths) - 1),
-                })
+            ph = _partial_hash(f)
+            if ph:
+                partial_groups[ph].append(f)
+
+        # Stage 3: only multi-member (size, partial) groups pay for a
+        # full-content hash
+        for partial_files in partial_groups.values():
+            if len(partial_files) < 2:
+                continue
+            hash_groups = defaultdict(list)
+            for f in partial_files:
+                h = _file_hash(f)
+                if h:
+                    hash_groups[h].append(str(f))
+            for h, paths in hash_groups.items():
+                if len(paths) >= 2:
+                    duplicates.append({
+                        "hash": h,
+                        "size": size,
+                        "files": paths,
+                        "wasted": size * (len(paths) - 1),
+                    })
 
     # Sort by wasted space descending
     duplicates.sort(key=lambda x: x["wasted"], reverse=True)
