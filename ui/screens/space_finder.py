@@ -13,7 +13,7 @@ from textual.widgets.selection_list import Selection
 
 from cleaner.large_files import clean_large_files
 from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
-from scanner.duplicates import find_duplicates
+from scanner.duplicates import find_duplicates, pick_keeper
 from scanner.large_files import find_large_files
 from scanner.system_data import scan_space_finder
 from ui.screens._util import push_modal, run_gated, run_offthread, skip_resume_rescan
@@ -42,13 +42,17 @@ def _row_label(category: str, item: dict) -> str:
         # otherwise-identical rows distinguishable (dev_junk convention).
         label += f"  [dim]…{item['path'][-40:]}[/dim]"
         return label
-    return f"{format_size(item['size']):>10}  {age}d  …{item['path'][-70:]}"
+    base = f"{format_size(item['size']):>10}  {age}d  …{item['path'][-70:]}"
+    if category == "duplicates" and item["path"] == item.get("keeper"):
+        return "★ keep  " + base
+    return base
 
 
 class SpaceFinderScreen(Screen):
     BINDINGS = [
         ("escape", "app.pop_screen", "Back"),
         ("t", "trash_selected", "Move to Trash"),
+        ("k", "select_dupes", "Select duplicates"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -77,8 +81,13 @@ class SpaceFinderScreen(Screen):
         self._scanning = True
         self.run_worker(self._scan, thread=True)
 
+    def _busy(self) -> bool:
+        """True if a scan or trash pass is in flight - action entry points
+        and on_screen_resume must check this before starting/rescanning."""
+        return self._scanning or self._trashing
+
     def on_screen_resume(self) -> None:
-        if skip_resume_rescan(self) or self._scanning or self._trashing:
+        if skip_resume_rescan(self) or self._busy():
             return
         self._rescan()
 
@@ -94,9 +103,11 @@ class SpaceFinderScreen(Screen):
             self.app.call_from_thread(self._fill, "large_files", large)
             dups = []
             for group in find_duplicates():
+                keeper = pick_keeper(group["files"])
                 for p in group["files"]:
                     dups.append({"path": p, "size": group["size"],
-                                 "age_days": 0, "group": group["hash"]})
+                                 "age_days": 0, "group": group["hash"],
+                                 "keeper": keeper})
             self.app.call_from_thread(self._fill, "duplicates", dups)
             self.app.call_from_thread(self._scan_done)
         except Exception as e:  # noqa: BLE001 - boundary: never let a raise kill the app
@@ -159,6 +170,24 @@ class SpaceFinderScreen(Screen):
             static.update("Nothing selected.")
         else:
             static.update(f"Selected: {count} item(s) (~{format_size(total)})")
+
+    # ---------- keeper selection (k) ----------
+
+    def action_select_dupes(self) -> None:
+        """One-keystroke bulk-select: every non-keeper duplicate row, across
+        every group, in one press. Keeper rows are never selected here - the
+        Keep-One handler above stays the backstop against manual mistakes."""
+        if self._busy():
+            self.notify("Busy - wait for the current operation.")
+            return
+        items = self.items["duplicates"]
+        if not items:
+            self.notify("No duplicates found.")
+            return
+        sel = self.query_one("#list-duplicates", SelectionList)
+        for i, item in items.items():
+            if item["path"] != item.get("keeper"):
+                sel.select(i)
 
     # ---------- trashing ----------
 
@@ -246,12 +275,34 @@ class SpaceFinderScreen(Screen):
                        reports: list[DeleteReport]) -> None:
         # Only drop paths safe_delete actually TRASHED - skipped (hard-protected,
         # running app, vanished) and failed items must stay listed and
-        # re-selectable, matching what ReportView reports.
+        # re-selectable, matching what ReportView reports. Reconcile every
+        # tab affected by trashed_paths, not just the ones the user picked
+        # from directly - a duplicate's copy can be trashed via a DIFFERENT
+        # tab (e.g. the keeper picked from Large Files), which would
+        # otherwise leave the Duplicates tab listing a path that no longer
+        # exists and stamped with a now-dead "keeper".
         trashed_paths = {r.path for report in reports for r in report.trashed}
-        for key in picked:
-            sel = self.query_one(f"#list-{key}", SelectionList)
+        affected = set(picked) | {
+            key for key in TABS
+            if any(it["path"] in trashed_paths
+                   for it in self.items[key].values())
+        }
+        for key in affected:
             keep = {i: it for i, it in self.items[key].items()
                     if it["path"] not in trashed_paths}
+            if key == "duplicates":
+                # Restamp keepers for every remaining group - trashing a
+                # keeper (from any tab) means one of the survivors must take
+                # over the ★, and a group reduced to a single row keeps that
+                # row stamped as its own keeper (correctly unselectable by k).
+                by_group: dict[str, list[dict]] = {}
+                for it in keep.values():
+                    by_group.setdefault(it["group"], []).append(it)
+                for members in by_group.values():
+                    keeper = pick_keeper([m["path"] for m in members])
+                    for m in members:
+                        m["keeper"] = keeper
+            sel = self.query_one(f"#list-{key}", SelectionList)
             sel.clear_options()
             self.items[key] = {}
             self._fill(key, list(keep.values()))
