@@ -4,7 +4,6 @@ import time
 from textual.app import App
 from textual.widgets import SelectionList, Static
 
-import cleaner.large_files as large_files_mod
 import scanner.duplicates as duplicates_mod
 from core.deleter import DeleteReport
 from scanner.large_files import LargeFile
@@ -502,7 +501,7 @@ async def test_k_after_cross_tab_trash_selects_nothing_and_t_notifies(
 
 async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, fake_trash):
     """Critical busy-coverage gap: the trash/reclaim flow never touched
-    _scanning, so navigating away and back while safe_delete was still
+    _scanning, so navigating away and back while the trash worker was still
     in-flight fired a resume-triggered _rescan() that raced _refresh_lists()
     and clobbered the just-trashed state. _trashing must span
     ConfirmModal -> trash worker -> (no reclaim offered here, single file)."""
@@ -517,13 +516,13 @@ async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, f
 
     monkeypatch.setattr(sf_mod.SpaceFinderScreen, "_rescan", counting_rescan)
 
-    real_safe_delete = sf_mod.safe_delete
+    real_trash_selection = sf_mod.trash_selection
 
-    def slow_safe_delete(*args, **kwargs):
+    def slow_trash_selection(*args, **kwargs):
         time.sleep(0.3)
-        return real_safe_delete(*args, **kwargs)
+        return real_trash_selection(*args, **kwargs)
 
-    monkeypatch.setattr("ui.screens.space_finder.safe_delete", slow_safe_delete)
+    monkeypatch.setattr("ui.screens.space_finder.trash_selection", slow_trash_selection)
 
     app = CleanerApp()
     async with app.run_test() as pilot:
@@ -553,10 +552,12 @@ async def test_resume_during_slow_trash_does_not_rescan(tmp_path, monkeypatch, f
     assert (fake_trash / "old.dmg").exists()
 
 
-async def test_large_files_route_through_clean_large_files(tmp_path, monkeypatch):
-    """The trash pass must split per category: large_files rows go through
-    clean_large_files (which stamps user_selected=True itself), while every
-    other category keeps calling safe_delete directly."""
+async def test_trash_pass_hands_whole_selection_to_trash_selection(tmp_path, monkeypatch):
+    """The screen no longer splits the batch per category itself: it hands the
+    whole cross-tab submission to trash_selection, which owns the Keep-One
+    Invariant and dispatches every category (large_files included) through
+    safe_delete. Per-category dispatch is proven in test_deleter.py; here we
+    only assert the screen delegates the full submission."""
     dl = ScanResult("downloads", "Downloads")
     dl_file = tmp_path / "old.dmg"
     dl_file.write_bytes(b"x" * 10)
@@ -570,22 +571,15 @@ async def test_large_files_route_through_clean_large_files(tmp_path, monkeypatch
         lambda **kw: [LargeFile(str(lf_file), 20, 0)])
     monkeypatch.setattr("ui.screens.space_finder.find_duplicates", lambda **kw: [])
 
-    clean_calls = []
+    captured = {}
 
-    def fake_clean_large_files(paths, dry_run=False):
-        clean_calls.append(list(paths))
-        return DeleteReport("large_files", dry_run=False)
+    def fake_trash_selection(submission, groups, dry_run=False):
+        captured["submission"] = submission
+        captured["groups"] = groups
+        return [DeleteReport(cat, dry_run=dry_run) for cat in submission]
 
     monkeypatch.setattr(
-        "ui.screens.space_finder.clean_large_files", fake_clean_large_files)
-
-    safe_delete_calls = []
-
-    def fake_safe_delete(rows, category, dry_run=False, user_selected=False):
-        safe_delete_calls.append(category)
-        return DeleteReport(category, dry_run=dry_run)
-
-    monkeypatch.setattr("ui.screens.space_finder.safe_delete", fake_safe_delete)
+        "ui.screens.space_finder.trash_selection", fake_trash_selection)
 
     host = Host()
     async with host.run_test() as pilot:
@@ -601,8 +595,10 @@ async def test_large_files_route_through_clean_large_files(tmp_path, monkeypatch
         await pilot.click("#confirm")
         await pilot.pause()
 
-    assert clean_calls == [[str(lf_file)]]
-    assert safe_delete_calls == ["downloads"]
+    assert set(captured["submission"]) == {"downloads", "large_files"}
+    assert [r["path"] for r in captured["submission"]["large_files"]] == [str(lf_file)]
+    assert [r["path"] for r in captured["submission"]["downloads"]] == [str(dl_file)]
+    assert captured["groups"] == []  # no duplicate groups this run
 
 
 def test_row_label_enriched_ios_with_version():
@@ -690,12 +686,11 @@ async def test_ios_backup_rows_show_device_and_staleness(
         assert f"…{str(plain)[-70:]}" in plain_label
 
 
-async def test_large_files_tab_real_clean_large_files_lands_in_trash(
+async def test_large_files_tab_real_trash_lands_in_trash(
         tmp_path, monkeypatch, fake_trash):
-    """Integration variant: real clean_large_files (not mocked), driven
-    through the conftest fake_trash - a real tmp file picked in the Large
-    Files tab lands in the fake trash and the report's category is
-    'large_files'."""
+    """Integration variant: real trash_selection (not mocked), driven through
+    the conftest fake_trash - a real tmp file picked in the Large Files tab
+    lands in the fake trash and the report's category is 'large_files'."""
     dl = ScanResult("downloads", "Downloads")
     monkeypatch.setattr("ui.screens.space_finder.scan_space_finder", lambda: [dl])
 
@@ -707,15 +702,15 @@ async def test_large_files_tab_real_clean_large_files_lands_in_trash(
     monkeypatch.setattr("ui.screens.space_finder.find_duplicates", lambda **kw: [])
 
     captured_reports = []
-    real_clean_large_files = large_files_mod.clean_large_files
+    real_trash_selection = sf_mod.trash_selection
 
-    def wrapped_clean_large_files(paths, dry_run=False):
-        report = real_clean_large_files(paths, dry_run=dry_run)
-        captured_reports.append(report)
-        return report
+    def wrapped_trash_selection(submission, groups, dry_run=False):
+        reports = real_trash_selection(submission, groups, dry_run=dry_run)
+        captured_reports.extend(reports)
+        return reports
 
     monkeypatch.setattr(
-        "ui.screens.space_finder.clean_large_files", wrapped_clean_large_files)
+        "ui.screens.space_finder.trash_selection", wrapped_trash_selection)
 
     host = Host()
     async with host.run_test() as pilot:

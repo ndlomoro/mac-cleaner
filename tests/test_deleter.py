@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import core.deleter as deleter_mod
+from core.dedup import KeepOneViolation
 from core.deleter import (
     DeleteReport,
     Outcome,
@@ -10,6 +11,7 @@ from core.deleter import (
     UserSelectionRequired,
     reclaim,
     safe_delete,
+    trash_selection,
 )
 from core.registry import UnknownCategoryError
 
@@ -217,3 +219,85 @@ def test_junk_categories_never_unlock_soft_protection(tmp_path, fake_trash):
     doc = Path.home() / "Documents" / "never-created.bin"
     report = safe_delete([{"path": str(doc), "size": 5}], "caches", dry_run=True)
     assert len(report.skipped) == 1
+
+
+# ---------- trash_selection: the Keep-One Invariant behind the interface ----------
+
+
+def test_trash_selection_dispatches_each_category(tmp_path, fake_trash):
+    a = tmp_path / "a.bin"; a.write_bytes(b"1234")
+    b = tmp_path / "b.bin"; b.write_bytes(b"55")
+    submission = {
+        "large_files": _items(a),
+        "downloads": _items(b),
+    }
+    reports = trash_selection(submission, groups=[])
+    assert [r.category for r in reports] == ["large_files", "downloads"]
+    assert not a.exists() and not b.exists()
+    assert (fake_trash / "a.bin").exists()
+    assert (fake_trash / "b.bin").exists()
+
+
+def test_trash_selection_upholds_keep_one_and_touches_nothing(tmp_path, fake_trash):
+    x = tmp_path / "x.bin"; x.write_bytes(b"1234")
+    y = tmp_path / "y.bin"; y.write_bytes(b"1234")
+    group = frozenset({str(x), str(y)})
+    submission = {"duplicates": _items(x, y)}
+    with pytest.raises(KeepOneViolation) as err:
+        trash_selection(submission, groups=[group])
+    assert err.value.groups == [group]
+    # fail-closed: the whole batch is refused, both copies survive on disk
+    assert x.exists() and y.exists()
+    assert not (fake_trash / "x.bin").exists()
+    assert not (fake_trash / "y.bin").exists()
+
+
+def test_trash_selection_allows_partial_group(tmp_path, fake_trash):
+    x = tmp_path / "x.bin"; x.write_bytes(b"1234")
+    y = tmp_path / "y.bin"; y.write_bytes(b"1234")
+    group = frozenset({str(x), str(y)})
+    # only one copy of the group is selected -> a survivor remains -> allowed
+    submission = {"duplicates": _items(x)}
+    reports = trash_selection(submission, groups=[group])
+    assert not x.exists()
+    assert y.exists()
+    assert reports[0].trashed[0].path == str(x)
+
+
+def test_trash_selection_checks_the_cross_category_union(tmp_path, fake_trash):
+    # a group's two copies are picked from DIFFERENT tabs; neither category on
+    # its own empties the group, but the union does -> must be caught.
+    x = tmp_path / "x.bin"; x.write_bytes(b"1234")
+    y = tmp_path / "y.bin"; y.write_bytes(b"1234")
+    group = frozenset({str(x), str(y)})
+    submission = {
+        "duplicates": _items(x),
+        "large_files": _items(y),
+    }
+    with pytest.raises(KeepOneViolation):
+        trash_selection(submission, groups=[group])
+    assert x.exists() and y.exists()
+
+
+def test_trash_selection_dry_run_validates_but_touches_nothing(tmp_path, fake_trash):
+    x = tmp_path / "x.bin"; x.write_bytes(b"1234")
+    y = tmp_path / "y.bin"; y.write_bytes(b"1234")
+    group = frozenset({str(x), str(y)})
+    # even a dry run refuses a batch that would empty a group
+    with pytest.raises(KeepOneViolation):
+        trash_selection({"duplicates": _items(x, y)}, groups=[group], dry_run=True)
+    # a valid dry run reports without trashing
+    reports = trash_selection({"duplicates": _items(x)}, groups=[group], dry_run=True)
+    assert reports[0].dry_run
+    assert x.exists()
+
+
+def test_trash_selection_passes_user_selected_tripwire(tmp_path, fake_trash):
+    # downloads is a user_data category; trash_selection must supply the
+    # user_selected tripwire or safe_delete would raise UserSelectionRequired.
+    doc = Path.home() / "Documents" / "never-created-selection.bin"
+    reports = trash_selection(
+        {"downloads": [{"path": str(doc), "size": 5}]},
+        groups=[], dry_run=True,
+    )
+    assert len(reports[0].trashed) == 1  # soft-protection unlocked, no raise

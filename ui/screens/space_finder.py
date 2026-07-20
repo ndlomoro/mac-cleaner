@@ -2,7 +2,8 @@
 
 Structural rules (see CONTEXT.md): nothing pre-selected, no select-all,
 user_selected=True is honest because paths come from live checkbox state,
-and the Duplicates tab enforces the Keep-One Invariant.
+and the Keep-One Invariant is enforced behind the deletion interface
+(core.deleter.trash_selection), not by this screen.
 """
 from textual.app import ComposeResult
 from textual.screen import Screen
@@ -11,8 +12,8 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
-from cleaner.large_files import clean_large_files
-from core.deleter import DeleteReport, ReclaimReport, reclaim, safe_delete
+from core.dedup import find_keep_one_violations
+from core.deleter import DeleteReport, ReclaimReport, reclaim, trash_selection
 from scanner.duplicates import find_duplicates, pick_keeper
 from scanner.large_files import find_large_files
 from scanner.system_data import scan_space_finder
@@ -135,6 +136,17 @@ class SpaceFinderScreen(Screen):
 
     # ---------- Keep-One Invariant / footer total ----------
 
+    def _duplicate_groups(self) -> list[frozenset[str]]:
+        """Full membership of every known Duplicate Group, from the scan.
+
+        Includes copies the user left unselected - the deletion interface needs
+        the whole group to tell whether a batch would remove the last survivor.
+        """
+        groups: dict[str, set[str]] = {}
+        for item in self.items["duplicates"].values():
+            groups.setdefault(item["group"], set()).add(item["path"])
+        return [frozenset(paths) for paths in groups.values()]
+
     def on_selection_list_selected_changed(
         self, event: SelectionList.SelectedChanged
     ) -> None:
@@ -214,21 +226,18 @@ class SpaceFinderScreen(Screen):
             self.notify("Nothing selected.")
             return
 
-        # Cross-tab Keep-One enforcement: a duplicate group can also be picked
-        # wholesale via the Large Files/Downloads tabs, bypassing the
-        # Duplicates-tab guard in on_selection_list_selected_changed. Check
-        # every known duplicate group (not just the duplicates tab's own
-        # selection) against the full set of picked paths across all tabs.
+        # Keep-One Invariant: the authority lives behind the deletion interface
+        # (trash_selection re-checks and refuses). This is the early, pre-modal
+        # warning so the user is never asked to confirm a batch that would be
+        # refused - the same check, over the union of picks across every tab,
+        # so a group reached wholesale via the Large Files/Downloads tabs is
+        # caught just like one selected in the Duplicates tab.
         picked_paths = {row["path"] for rows in picked.values() for row in rows}
-        groups: dict[str, set[str]] = {}
-        for item in self.items["duplicates"].values():
-            groups.setdefault(item["group"], set()).add(item["path"])
-        for group_paths in groups.values():
-            if group_paths and group_paths <= picked_paths:
-                self.notify(
-                    "One copy of each duplicate is always kept - deselect one copy.",
-                    severity="warning")
-                return
+        if find_keep_one_violations(picked_paths, self._duplicate_groups()):
+            self.notify(
+                "One copy of each duplicate is always kept - deselect one copy.",
+                severity="warning")
+            return
 
         count = sum(len(v) for v in picked.values())
         total = sum(f["size"] for v in picked.values() for f in v)
@@ -241,15 +250,12 @@ class SpaceFinderScreen(Screen):
                 return
 
             def _work() -> list[DeleteReport]:
-                reports = []
-                for category, rows in picked.items():
-                    if category == "large_files":
-                        reports.append(clean_large_files(
-                            [r["path"] for r in rows], dry_run=False))
-                    else:
-                        reports.append(safe_delete(
-                            rows, category, dry_run=False, user_selected=True))
-                return reports
+                # trash_selection owns the Keep-One Invariant and dispatches
+                # every category (including large_files) through safe_delete;
+                # the pre-modal check above already cleared this batch, so the
+                # re-check inside is the authoritative backstop.
+                return trash_selection(picked, self._duplicate_groups(),
+                                       dry_run=False)
 
             def _done(reports: list[DeleteReport]) -> None:
                 self.query_one(ReportView).show(reports)

@@ -31,11 +31,16 @@ _Avoid_: blacklisted, forbidden
 User-content folders (Documents, Desktop, Pictures) that bulk cleaning can never touch, but an individually picked and confirmed selection can send to the Trash.
 _Avoid_: semi-protected
 
+**Duplicate Group**:
+A set of files with identical content, discovered by the duplicates scan. Membership is the whole set — every copy, including the ones the user leaves alone. One member is labelled the Keeper, but the label carries no safety weight.
+_Avoid_: duplicate set, dupe cluster
+
 **Keep-One Invariant**:
-In any group of duplicate files, at least one copy can never be selected for removal. Enforced by the interface, not left to the user's care.
+No Duplicate Group may be emptied: at least one member always survives a deletion. Keeper-agnostic — the invariant guarantees a survivor, not that the labelled Keeper is the one that stays. Enforced behind the deletion interface (`core.dedup` + `core.deleter.trash_selection`) over full group membership, so it holds no matter which caller reaches deletion — never left to a UI guard. The UI's live selection feedback is convenience, not the backstop.
+_Avoid_: keep-a-copy, at-least-one rule
 
 **Keeper**:
-The copy of a duplicate group the app suggests keeping — marked ★, never auto-selected for removal.
+The copy of a Duplicate Group the app suggests keeping — marked ★, never auto-selected for removal. Advisory only: it drives the badge and the one-keystroke non-keeper selection, but the Keep-One Invariant protects a survivor regardless of which copy holds the label.
 _Avoid_: original, master
 
 **Safety Level**:

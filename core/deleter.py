@@ -1,8 +1,10 @@
 """safe_delete() - the only function in this codebase allowed to destroy file data."""
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from core.dedup import KeepOneViolation, find_keep_one_violations
 from core.registry import get as get_category
 from core.safety import is_protected, running_apps
 from core.trash import NotInTrashError, TrashError, delete_from_trash, trash_item
@@ -110,6 +112,43 @@ def safe_delete(items: list[dict], category: str,
         log_cleaning_action("Trashed", path_str)
 
     return report
+
+
+def trash_selection(
+    submission: dict[str, list[dict]],
+    groups: Iterable[frozenset[str]],
+    dry_run: bool = False,
+) -> list[DeleteReport]:
+    """Trash a whole Space Finder selection, upholding the Keep-One Invariant.
+
+    `submission` maps category -> item dicts (path + size) - exactly the shape
+    the Space Finder builds from live checkbox state. `groups` is the full
+    membership of every known Duplicate Group.
+
+    The invariant is enforced HERE, behind the deletion interface, rather than
+    in the UI: the union of every path across the whole submission is checked
+    before anything is trashed, so a group whose copies are picked from
+    different tabs is still caught. If any group would be emptied this raises
+    KeepOneViolation and nothing is touched - validate-all-then-delete, so a
+    rejected batch never half-runs. On success each category is dispatched
+    through safe_delete with user_selected=True (every Space Finder category is
+    Reclaimable User Data) and the reports are returned in submission order.
+    """
+    picked_paths = {
+        row["path"]
+        for rows in submission.values()
+        for row in rows
+        if isinstance(row.get("path"), str)
+    }
+    violations = find_keep_one_violations(picked_paths, groups)
+    if violations:
+        raise KeepOneViolation(violations)
+
+    return [
+        safe_delete(rows, category, dry_run=dry_run, user_selected=True)
+        for category, rows in submission.items()
+        if rows
+    ]
 
 
 @dataclass
