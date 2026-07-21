@@ -79,6 +79,27 @@ def test_real_delete_goes_to_trash(tmp_path, fake_trash):
     assert report.trashed_bytes == 5
 
 
+def test_real_delete_remeasures_stale_file_size(tmp_path, fake_trash):
+    """A regular file grown since the scan is accounted at its real size,
+    not the scanner's cached estimate - so Reclaimed stays truthful."""
+    f = tmp_path / "grew.bin"
+    f.write_bytes(b"0" * 500)
+    # Caller passes a stale scan-time size (100); the file is really 500.
+    report = safe_delete([{"path": str(f), "size": 100}], "caches")
+    assert report.trashed_bytes == 500
+    assert report.trashed[0].size == 500
+
+
+def test_dir_size_is_not_remeasured(tmp_path, fake_trash):
+    """Directory sizes come from a scan-time tree walk; a live stat of the
+    directory entry would undercount, so the cached size is kept."""
+    d = tmp_path / "tree"
+    d.mkdir()
+    (d / "big.bin").write_bytes(b"0" * 4096)
+    report = safe_delete([{"path": str(d), "size": 4096}], "caches")
+    assert report.trashed_bytes == 4096
+
+
 def test_protected_paths_skipped_with_reason(tmp_path, fake_trash):
     target = Path.home() / "Documents"
     link = tmp_path / "sneaky"

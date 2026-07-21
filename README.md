@@ -14,27 +14,40 @@ attachment copies and caches** are ever cleanable.
 ## Usage
 
 ```
-python3 main.py
+python3 main.py           # the interactive menu (default)
+python3 main.py --tui     # the full-screen Textual UI (kept alongside)
 ```
 
-This launches a full-screen terminal UI. From the dashboard:
+The default is a Rich text menu: a live disk header over a numbered list.
+Pick a number to work an area; each area scans, shows what it found, gates,
+acts, and returns you to the menu.
 
-- `1`-`7` navigate to an area (System Data/Junk, Space Finder, Privacy,
-  Optimize, Snapshots, Uninstall Apps, Dev Junk)
-- `s` runs a Quick Scan across every area from the dashboard, without
-  opening any of them - it now includes a Dev Junk line (total size across
-  affected projects) alongside the other categories
-- `d` previews a dry run for the current area (nothing is touched)
-- `c` cleans the current area for real (items move to the Trash)
-- `v` toggles a per-file preview of what a category would touch, before
-  you commit to a dry run or clean
-- `t` moves picked items to the Trash (Space Finder, Dev Junk - nothing
-  is pre-selected; you choose each item)
-- Uninstalling an app always runs a dry run first and shows you exactly
-  what it found before asking for confirmation
-- `escape` goes back, `q` quits
+- `1` **Quick Scan** - read-only report across the junk categories; nothing
+  is touched
+- `2` **System Junk** - caches, logs, temp, mail copies (all SAFE); previews
+  what would be Trashed, confirms, then moves it to the Trash
+- `3` **Space Finder** - Downloads, iOS backups, large files, duplicates;
+  nothing is pre-selected, you pick each row, and the Keep-One Invariant is
+  enforced behind the deletion interface (a duplicate group can never be
+  fully emptied)
+- `4` **Privacy** - Trash browser/tracking caches, or clear the recent-items
+  list (an Irreversible Action, typed-gate); browser history is shown but
+  never deleted
+- `5` **Optimize** - developer caches (Xcode/CocoaPods/pip go to the Trash;
+  brew/npm clean via their own tools)
+- `6` **Snapshots** - delete local Time Machine snapshots (Irreversible,
+  typed-gate)
+- `7` **Uninstall App** - Trash an app bundle and its leftovers, dry run
+  shown first
+- `8` **Dev Junk** - project artifacts to the Trash; Docker prune and
+  simulator cleanup run via their own tools (Irreversible, typed-gate,
+  volumes opt-in)
 
-## Mail Junk (part of System Data, key 1)
+Recoverable actions ask for a `y/N` confirm; Irreversible Actions require you
+to type `yes`. After anything is Trashed you're offered a typed-gate reclaim
+to permanently empty exactly what was just trashed.
+
+## Mail Junk (part of System Junk, key 2)
 
 Two SAFE categories, scanned alongside caches/logs/temp/browser-cache:
 
@@ -50,7 +63,7 @@ from inside it, even from the legacy-location list, no matter what's on
 disk. Mail recreates anything removed here on its own; nothing you've
 written or received is at risk.
 
-## Space Finder (key 2)
+## Space Finder (key 3)
 
 Four tabs, each RISKY - real user content, nothing pre-selected, you pick
 items individually and Trash them with `t`:
@@ -81,7 +94,7 @@ items individually and Trash them with `t`:
   individually - either way, nothing is ever pre-selected and the Keep-One
   Invariant means at least one copy per group can never go.
 
-## Dev Junk (key 7)
+## Dev Junk (key 8)
 
 Build artifacts, dependency folders and caches (`node_modules`, Rust
 `target`, Python venvs, Gradle/Maven caches) from projects under
@@ -109,7 +122,8 @@ isn't installed.
 
 Tests: `python3 -m pytest tests/`
 
-**Known gap:** automated tests cover the scanners, deletion logic and
-screen wiring, but there is no automated end-to-end smoke test of the
-live terminal UI. A human `python3 main.py` walkthrough remains the
+**Known gap:** automated tests cover the scanners, deletion logic, the CLI
+flows (via a scripted stand-in UI) and the Textual screen wiring, but there
+is no automated end-to-end smoke test driving a real terminal. A human
+`python3 main.py` walkthrough (and `--tui` for the Textual UI) remains the
 standing manual check before merging UI-facing changes.

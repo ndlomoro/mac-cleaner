@@ -42,6 +42,7 @@ OPTIONS = {
         "scanner",
         "cleaner",
         "utils",
+        "cli",
         "ui",
         "textual",
     ],

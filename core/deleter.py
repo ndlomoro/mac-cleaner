@@ -100,6 +100,17 @@ def safe_delete(items: list[dict], category: str,
                 PathResult(path_str, Outcome.SKIPPED, size, "no longer exists"))
             continue
 
+        # Re-measure regular files at deletion time so Reclaimed/trashed_bytes
+        # reflects the file's real current size, not the scanner's cached
+        # estimate. Directory sizes come from a tree walk at scan time; a live
+        # stat of the directory entry would undercount, so those keep the
+        # cached size.
+        if path.is_file() and not path.is_symlink():
+            try:
+                size = path.stat().st_size
+            except OSError:
+                pass
+
         try:
             trash_path = trash_item(path)
         except Exception as e:
