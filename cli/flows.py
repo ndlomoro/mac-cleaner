@@ -12,7 +12,7 @@ from cleaner.app_remnants import uninstall_app
 from cleaner.optimization import optimize_mac
 from cleaner.privacy import clean_privacy, clear_recently_used
 from cleaner.snapshots import clean_snapshots
-from cleaner.system_data import clean_system_data
+from cleaner.system_data import clean_files
 from core.dedup import find_keep_one_violations
 from core.deleter import DeleteReport, reclaim, safe_delete
 from core.deleter import trash_selection
@@ -76,19 +76,44 @@ def quick_scan(ui: UI) -> None:
 
 def system_junk(ui: UI) -> None:
     ui.print("Scanning system junk…")
-    preview = list(clean_system_data(dry_run=True).values())
-    count = sum(len(r.trashed) for r in preview)
-    total = sum(r.trashed_bytes for r in preview)
-    if count == 0:
+    results = scan_all()  # non-empty SAFE junk categories, one ScanResult each
+    if not results:
         ui.print("[green]No cleanable junk found.[/green]")
         return
-    ui.lines(render.reports_lines(preview))
+    items = {i: r for i, r in enumerate(results, 1)}
+
+    table = Table(title="System Junk", header_style="bold")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Category", style="cyan")
+    table.add_column("Items", justify="right")
+    table.add_column("Size", justify="right", style="magenta")
+    for num in sorted(items):
+        r = items[num]
+        table.add_row(str(num), r.name, str(r.file_count), r.human_size)
+    ui.print(table)
+
+    raw = ui.ask("Categories to Trash (e.g. 3 / 1,2 / a=all / b=back)")
+    try:
+        parsed = parse_row_selection(raw, len(results))
+    except ValueError as e:
+        ui.print(f"[yellow]{e}[/yellow]")
+        return
+    if parsed == "back":
+        return
+    picked = (list(items.values()) if parsed == "all"
+              else [items[i] for i in sorted(parsed)])
+
+    count = sum(r.file_count for r in picked)
+    total = sum(r.total_size for r in picked)
     if not ui.confirm(f"Move {count} item(s) (~{format_size(total)}) to Trash?"):
         ui.print("Cancelled - nothing was touched.")
         return
-    real = list(clean_system_data(dry_run=False).values())
-    ui.lines(render.reports_lines(real))
-    _offer_reclaim(ui, real)
+    # Trash exactly the categories the user picked, from this same scan - no
+    # re-scan between the preview table and the delete, so what they saw is
+    # what gets Trashed.
+    reports = [clean_files(r, dry_run=False) for r in picked]
+    ui.lines(render.reports_lines(reports))
+    _offer_reclaim(ui, reports)
 
 
 # --------------------------------------------------------------------------

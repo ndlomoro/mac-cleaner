@@ -24,8 +24,9 @@ acts, and returns you to the menu.
 
 - `1` **Quick Scan** - read-only report across the junk categories; nothing
   is touched
-- `2` **System Junk** - caches, logs, temp, mail copies (all SAFE); previews
-  what would be Trashed, confirms, then moves it to the Trash
+- `2` **System Junk** - caches, logs, temp, mail copies (all SAFE); shows a
+  numbered category table and lets you pick which categories to Trash (e.g.
+  just Temporary Files), confirms, then moves them to the Trash
 - `3` **Space Finder** - Downloads, iOS backups, large files, duplicates;
   nothing is pre-selected, you pick each row, and the Keep-One Invariant is
   enforced behind the deletion interface (a duplicate group can never be

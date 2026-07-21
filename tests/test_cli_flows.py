@@ -6,6 +6,7 @@ import pytest
 
 from cli import app, flows
 from core.deleter import DeleteReport, Outcome, PathResult
+from scanner.system_data import ScanResult
 
 
 class FakeUI:
@@ -56,46 +57,73 @@ def _report(category, dry_run, trashed=()):
     return r
 
 
-# ---- 2. System Junk ----
+def _scan(category, name, files):
+    """A ScanResult; files is a list of (path, size)."""
+    r = ScanResult(category, name)
+    for path, size in files:
+        r.add_file(path, size, 0)
+    return r
 
-def test_system_junk_trashes_then_offers_reclaim(monkeypatch):
-    calls = []
 
-    def fake_clean(dry_run=False):
-        calls.append(dry_run)
-        return {"caches": _report("caches", dry_run, [("/c/a", 100)])}
+# ---- 2. System Junk (per-category selection) ----
 
-    monkeypatch.setattr(flows, "clean_system_data", fake_clean)
+def _junk_scan(monkeypatch):
+    """Three categories the user can pick between; records what clean_files ran."""
+    results = [
+        _scan("caches", "User Caches", [("/c/a", 100), ("/c/b", 200)]),
+        _scan("logs", "System & App Logs", [("/l/a", 50)]),
+        _scan("temp", "Temporary Files", [("/t/a", 10), ("/t/b", 20), ("/t/c", 30)]),
+    ]
+    monkeypatch.setattr(flows, "scan_all", lambda: results)
+    cleaned = []
+
+    def fake_clean(scan_result, dry_run=False):
+        cleaned.append(scan_result.category)
+        return _report(scan_result.category, dry_run,
+                       [(f["path"], f["size"]) for f in scan_result.files])
+
+    monkeypatch.setattr(flows, "clean_files", fake_clean)
+    return cleaned
+
+
+def test_system_junk_picks_single_category(monkeypatch):
+    cleaned = _junk_scan(monkeypatch)
     reclaimed = []
     monkeypatch.setattr(flows, "reclaim", lambda reports: reclaimed.append(reports))
-
-    ui = FakeUI(confirms=[True], gates=[False])  # confirm trash, decline reclaim
+    # pick only Temporary Files (row 3); confirm trash; decline reclaim
+    ui = FakeUI(answers=["3"], confirms=[True], gates=[False])
     flows.system_junk(ui)
-
-    assert calls == [True, False]  # dry preview, then real
+    assert cleaned == ["temp"]  # caches/logs untouched
     assert any("Moved to Trash" in line for line in ui.out)
     assert any("Kept in Trash" in line for line in ui.out)
-    assert reclaimed == []  # declined -> reclaim never called
+    assert reclaimed == []
+
+
+def test_system_junk_all_categories(monkeypatch):
+    cleaned = _junk_scan(monkeypatch)
+    monkeypatch.setattr(flows, "reclaim", lambda reports: None)
+    ui = FakeUI(answers=["a"], confirms=[True], gates=[False])
+    flows.system_junk(ui)
+    assert cleaned == ["caches", "logs", "temp"]
+
+
+def test_system_junk_back_selects_nothing(monkeypatch):
+    cleaned = _junk_scan(monkeypatch)
+    ui = FakeUI(answers=["b"])
+    flows.system_junk(ui)
+    assert cleaned == []
 
 
 def test_system_junk_cancel_does_not_delete(monkeypatch):
-    calls = []
-
-    def fake_clean(dry_run=False):
-        calls.append(dry_run)
-        return {"caches": _report("caches", dry_run, [("/c/a", 100)])}
-
-    monkeypatch.setattr(flows, "clean_system_data", fake_clean)
-    ui = FakeUI(confirms=[False])
+    cleaned = _junk_scan(monkeypatch)
+    ui = FakeUI(answers=["1,3"], confirms=[False])
     flows.system_junk(ui)
-
-    assert calls == [True]  # only the dry preview ran
+    assert cleaned == []
     assert any("Cancelled" in line for line in ui.out)
 
 
 def test_system_junk_nothing_found(monkeypatch):
-    monkeypatch.setattr(flows, "clean_system_data",
-                        lambda dry_run=False: {})
+    monkeypatch.setattr(flows, "scan_all", lambda: [])
     ui = FakeUI()
     flows.system_junk(ui)
     assert any("No cleanable junk" in line for line in ui.out)
